@@ -190,6 +190,16 @@ export default function ChatPage() {
       })
       .catch(() => {});
 
+    // Instant fetch all active/registered users for discovery
+    fetch(`/api/users/search?currentUsername=${storedUsername}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.users && Array.isArray(data.users)) {
+          setSearchResults(data.users);
+        }
+      })
+      .catch(() => {});
+
     // Register user profile in backend
     fetch("/api/user/profile", {
       method: "POST",
@@ -1089,19 +1099,84 @@ export default function ChatPage() {
           {activeTab === "messages" && (
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {contacts.length === 0 ? (
-                <div className="text-center py-12 px-4 space-y-3">
-                  <div className="text-3xl animate-float">💬</div>
-                  <h4 className="text-xs font-bold text-white">No chats yet</h4>
-                  <p className="text-[11px] text-zinc-400 leading-relaxed">
-                    Search for any user to send a request, or accept an incoming request to start chatting & video calling.
-                  </p>
-                  <button
-                    onClick={() => setActiveTab("search")}
-                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 transition"
-                  >
-                    <Search className="w-3.5 h-3.5" />
-                    <span>Search Users</span>
-                  </button>
+                <div className="p-3 space-y-4">
+                  <div className="text-center py-5 px-3 space-y-2 glass-panel rounded-2xl border border-usly-pink/30">
+                    <div className="text-3xl animate-float">💌</div>
+                    <h4 className="text-xs font-bold text-white">Find People to Chat & Call</h4>
+                    <p className="text-[11px] text-zinc-300 leading-relaxed">
+                      Select any registered user below to send a message, love ping, or start an HD video call!
+                    </p>
+                  </div>
+
+                  {searchResults.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] font-bold text-usly-coral uppercase tracking-wider px-1">
+                        Active Users ({searchResults.length})
+                      </div>
+                      {searchResults.map((user) => (
+                        <div
+                          key={user.username}
+                          onClick={() => {
+                            setContacts((prev) => {
+                              if (prev.some((c) => c.username === user.username)) return prev;
+                              const next = [user, ...prev];
+                              localStorage.setItem(
+                                `usly_contacts_${currentUser.username}`,
+                                JSON.stringify(next)
+                              );
+                              return next;
+                            });
+                            setSelectedUser(user);
+                          }}
+                          className="flex items-center justify-between p-2.5 rounded-2xl bg-usly-surface/60 border border-white/5 hover:border-usly-pink/40 transition cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0">
+                            <img
+                              src={user.avatar}
+                              alt={user.name}
+                              className="w-10 h-10 rounded-full border border-usly-pink/20 flex-shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <h4 className="text-xs font-bold text-white truncate">{user.name}</h4>
+                              <span className="text-[10px] text-zinc-400 font-mono block truncate">
+                                @{user.username}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => {
+                                setContacts((prev) => {
+                                  if (prev.some((c) => c.username === user.username)) return prev;
+                                  const next = [user, ...prev];
+                                  localStorage.setItem(
+                                    `usly_contacts_${currentUser.username}`,
+                                    JSON.stringify(next)
+                                  );
+                                  return next;
+                                });
+                                setSelectedUser(user);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition"
+                            >
+                              Chat 💬
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <button
+                        onClick={() => setActiveTab("search")}
+                        className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 transition"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Search by Username</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 contacts.map((contact) => {
