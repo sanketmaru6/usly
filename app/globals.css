@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #090410;
+  --foreground: #f8fafc;
+}
+
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 20% 15%, rgba(255, 75, 114, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(147, 51, 234, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 50% 50%, rgba(124, 58, 237, 0.08) 0%, transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Custom romantic scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 7, 26, 0.6);
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #FF4B72, #9333EA);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #FF4B72;
+}
+
+/* Glassmorphism card utilities */
+.glass-panel {
+  background: rgba(22, 11, 38, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 75, 114, 0.18);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-panel-glow {
+  background: rgba(26, 12, 46, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 101, 132, 0.3);
+  box-shadow: 0 0 25px rgba(255, 75, 114, 0.2), 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.glass-bubble-me {
+  background: linear-gradient(135deg, rgba(255, 75, 114, 0.9) 0%, rgba(180, 40, 100, 0.85) 100%);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 15px rgba(255, 75, 114, 0.3);
+}
+
+.glass-bubble-partner {
+  background: rgba(36, 18, 62, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(147, 51, 234, 0.25);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+}
+
+/* Glowing text */
+.glow-text-pink {
+  text-shadow: 0 0 12px rgba(255, 75, 114, 0.6), 0 0 24px rgba(255, 75, 114, 0.3);
+}
+
+.glow-text-purple {
+  text-shadow: 0 0 12px rgba(168, 85, 247, 0.6), 0 0 24px rgba(168, 85, 247, 0.3);
+}
+
+/* Floating animation */
+@keyframes floating-heart {
+  0% {
+    transform: translateY(0) scale(0.8) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-280px) scale(1.4) rotate(25deg);
+    opacity: 0;
+  }
+}
+
+.animate-floating-heart {
+  animation: floating-heart 2.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+/* Screen shake for Love Ping */
+@keyframes love-shake {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  10%, 30%, 50%, 70%, 90% { transform: translate(-3px, 2px) scale(1.02); }
+  20%, 40%, 60%, 80% { transform: translate(3px, -2px) scale(1.02); }
+}
+
+.love-shake-effect {
+  animation: love-shake 0.8s ease-in-out;
+}
