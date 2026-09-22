@@ -3,6 +3,8 @@ import { connectToDatabase } from "@/lib/db";
 import { FriendRequest } from "@/lib/models/FriendRequest";
 import { signalingStore } from "@/lib/signalingStore";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const username = searchParams.get("username")?.toLowerCase().trim();
@@ -13,9 +15,9 @@ export async function GET(req: NextRequest) {
 
   const memoryData = signalingStore.getRequestsForUser(username);
 
-  const dbRes = await connectToDatabase();
-  if (dbRes.isConnected) {
-    try {
+  try {
+    const dbRes = await connectToDatabase();
+    if (dbRes.isConnected) {
       const dbIncoming = await FriendRequest.find({
         receiverUsername: username,
         status: "pending",
@@ -32,13 +34,37 @@ export async function GET(req: NextRequest) {
       });
 
       return NextResponse.json({
-        incomingPending: dbIncoming.length > 0 ? dbIncoming : memoryData.incomingPending,
-        outgoingPending: dbOutgoing.length > 0 ? dbOutgoing : memoryData.outgoingPending,
-        acceptedConnections: dbAccepted.length > 0 ? dbAccepted : memoryData.acceptedConnections,
+        incomingPending: dbIncoming.map((r) => ({
+          id: r._id.toString(),
+          senderUsername: r.senderUsername,
+          senderName: r.senderName,
+          senderAvatar: r.senderAvatar,
+          receiverUsername: r.receiverUsername,
+          status: r.status,
+          createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        })),
+        outgoingPending: dbOutgoing.map((r) => ({
+          id: r._id.toString(),
+          senderUsername: r.senderUsername,
+          senderName: r.senderName,
+          senderAvatar: r.senderAvatar,
+          receiverUsername: r.receiverUsername,
+          status: r.status,
+          createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        })),
+        acceptedConnections: dbAccepted.map((r) => ({
+          id: r._id.toString(),
+          senderUsername: r.senderUsername,
+          senderName: r.senderName,
+          senderAvatar: r.senderAvatar,
+          receiverUsername: r.receiverUsername,
+          status: r.status,
+          createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        })),
       });
-    } catch (err: any) {
-      console.error("Requests GET error:", err.message);
     }
+  } catch (err: any) {
+    console.error("Requests GET error:", err.message);
   }
 
   return NextResponse.json(memoryData);
@@ -55,31 +81,41 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Sender and receiver required" }, { status: 400 });
       }
 
+      const sUname = senderUsername.toLowerCase().trim();
+      const rUname = receiverUsername.toLowerCase().trim();
+
       const reqObj = signalingStore.sendRequest(
-        senderUsername,
-        senderName || senderUsername,
-        senderAvatar,
-        receiverUsername
+        sUname,
+        senderName || sUname,
+        senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
+        rUname
       );
 
-      const dbRes = await connectToDatabase();
-      if (dbRes.isConnected) {
-        try {
-          await FriendRequest.findOneAndUpdate(
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          const saved = await FriendRequest.findOneAndUpdate(
             {
-              senderUsername: senderUsername.toLowerCase().trim(),
-              receiverUsername: receiverUsername.toLowerCase().trim(),
+              $or: [
+                { senderUsername: sUname, receiverUsername: rUname },
+                { senderUsername: rUname, receiverUsername: sUname },
+              ],
             },
             {
-              senderName: senderName || senderUsername,
-              senderAvatar,
+              senderUsername: sUname,
+              senderName: senderName || sUname,
+              senderAvatar: senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
+              receiverUsername: rUname,
               status: "pending",
             },
             { upsert: true, new: true }
           );
-        } catch (e: any) {
-          console.error("DB send request error:", e.message);
+          if (saved) {
+            reqObj.id = saved._id.toString();
+          }
         }
+      } catch (e: any) {
+        console.error("DB send request error:", e.message);
       }
 
       return NextResponse.json({ success: true, request: reqObj });
@@ -87,21 +123,31 @@ export async function POST(req: NextRequest) {
 
     // 2. ACCEPT REQUEST
     if (action === "accept") {
-      if (!requestId) {
-        return NextResponse.json({ error: "RequestId required" }, { status: 400 });
+      if (!requestId && !senderUsername && !receiverUsername) {
+        return NextResponse.json({ error: "RequestId or users required" }, { status: 400 });
       }
 
-      const accepted = signalingStore.acceptRequest(requestId);
+      const accepted = requestId ? signalingStore.acceptRequest(requestId) : null;
 
-      const dbRes = await connectToDatabase();
-      if (dbRes.isConnected) {
-        try {
-          if (requestId.length === 24) {
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          if (requestId && requestId.length === 24) {
             await FriendRequest.findByIdAndUpdate(requestId, { status: "accepted" });
+          } else if (senderUsername && receiverUsername) {
+            await FriendRequest.findOneAndUpdate(
+              {
+                $or: [
+                  { senderUsername: senderUsername.toLowerCase(), receiverUsername: receiverUsername.toLowerCase() },
+                  { senderUsername: receiverUsername.toLowerCase(), receiverUsername: senderUsername.toLowerCase() },
+                ],
+              },
+              { status: "accepted" }
+            );
           }
-        } catch (e: any) {
-          console.error("DB accept request error:", e.message);
         }
+      } catch (e: any) {
+        console.error("DB accept request error:", e.message);
       }
 
       return NextResponse.json({ success: true, request: accepted });
@@ -109,21 +155,31 @@ export async function POST(req: NextRequest) {
 
     // 3. DECLINE REQUEST
     if (action === "decline") {
-      if (!requestId) {
-        return NextResponse.json({ error: "RequestId required" }, { status: 400 });
+      if (!requestId && !senderUsername && !receiverUsername) {
+        return NextResponse.json({ error: "RequestId or users required" }, { status: 400 });
       }
 
-      const declined = signalingStore.declineRequest(requestId);
+      const declined = requestId ? signalingStore.declineRequest(requestId) : null;
 
-      const dbRes = await connectToDatabase();
-      if (dbRes.isConnected) {
-        try {
-          if (requestId.length === 24) {
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          if (requestId && requestId.length === 24) {
             await FriendRequest.findByIdAndUpdate(requestId, { status: "declined" });
+          } else if (senderUsername && receiverUsername) {
+            await FriendRequest.findOneAndUpdate(
+              {
+                $or: [
+                  { senderUsername: senderUsername.toLowerCase(), receiverUsername: receiverUsername.toLowerCase() },
+                  { senderUsername: receiverUsername.toLowerCase(), receiverUsername: senderUsername.toLowerCase() },
+                ],
+              },
+              { status: "declined" }
+            );
           }
-        } catch (e: any) {
-          console.error("DB decline request error:", e.message);
         }
+      } catch (e: any) {
+        console.error("DB decline request error:", e.message);
       }
 
       return NextResponse.json({ success: true, request: declined });

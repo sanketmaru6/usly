@@ -176,6 +176,20 @@ export default function ChatPage() {
       }
     } catch {}
 
+    // Instant fetch live conversations from API
+    fetch(`/api/conversations?username=${storedUsername}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.conversations && Array.isArray(data.conversations) && data.conversations.length > 0) {
+          setContacts(data.conversations);
+          localStorage.setItem(
+            `usly_contacts_${storedUsername}`,
+            JSON.stringify(data.conversations)
+          );
+        }
+      })
+      .catch(() => {});
+
     // Register user profile in backend
     fetch("/api/user/profile", {
       method: "POST",

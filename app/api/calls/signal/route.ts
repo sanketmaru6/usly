@@ -6,7 +6,7 @@ import { CallSession } from "@/lib/models/CallSession";
 
 export const dynamic = "force-dynamic";
 
-// WebRTC Signaling API
+// WebRTC Signaling API (Cross-Instance Serverless Support)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -30,49 +30,110 @@ export async function POST(req: NextRequest) {
         providedCallId ||
         "call_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-      const newCall = signalingStore.createCall({
+      const callerU = (callerUsername || "").toLowerCase().trim();
+      const receiverU = (receiverUsername || "").toLowerCase().trim();
+
+      const newCallData = {
         callId,
-        callerId: callerId || `usr_${callerUsername}`,
-        callerName: callerName || callerUsername,
-        callerUsername: (callerUsername || "").toLowerCase().trim(),
-        callerAvatar,
-        receiverId: receiverId || `usr_${receiverUsername}`,
-        receiverUsername: (receiverUsername || "").toLowerCase().trim(),
-        type: type || "video",
-        status: "ringing",
-        offer,
-      });
+        callerId: callerId || `usr_${callerU}`,
+        callerName: callerName || callerU,
+        callerUsername: callerU,
+        callerAvatar: callerAvatar || "",
+        receiverId: receiverId || `usr_${receiverU}`,
+        receiverName: receiverU,
+        receiverUsername: receiverU,
+        type: (type as "audio" | "video") || "video",
+        status: "ringing" as const,
+        offer: offer || null,
+        callerCandidates: [],
+        receiverCandidates: [],
+        durationSeconds: 0,
+        updatedAt: Date.now(),
+      };
 
-      // Save call session to MongoDB in background if connected
-      connectToDatabase().then((dbRes) => {
+      // In-memory store
+      signalingStore.createCall(newCallData);
+
+      // Save to MongoDB for cross-serverless persistence
+      try {
+        const dbRes = await connectToDatabase();
         if (dbRes.isConnected) {
-          CallSession.create({
-            callerId: callerId || callerUsername,
-            callerName: callerName || callerUsername,
-            receiverId: receiverId || receiverUsername,
-            receiverName: receiverUsername,
-            type: type || "video",
-            status: "ringing",
-            signalOffer: offer ? JSON.stringify(offer) : undefined,
-            startedAt: new Date(),
-          }).catch((err) => console.error("CallSession DB error:", err.message));
+          await CallSession.findOneAndUpdate(
+            { callId },
+            {
+              callId,
+              callerId: callerId || `usr_${callerU}`,
+              callerName: callerName || callerU,
+              callerUsername: callerU,
+              callerAvatar: callerAvatar || "",
+              receiverId: receiverId || `usr_${receiverU}`,
+              receiverName: receiverU,
+              receiverUsername: receiverU,
+              type: type || "video",
+              status: "ringing",
+              offer,
+              callerCandidates: [],
+              receiverCandidates: [],
+              startedAt: new Date(),
+            },
+            { upsert: true, new: true }
+          );
         }
-      });
+      } catch (err: any) {
+        console.error("Initiate call DB error:", err.message);
+      }
 
-      return NextResponse.json({ success: true, callId, call: newCall });
+      return NextResponse.json({ success: true, callId, call: newCallData });
     }
 
-    // 2. ANSWER A CALL
+    // 2. SET OR UPDATE OFFER
+    if (action === "set_offer") {
+      const { callId, offer } = body;
+      signalingStore.updateCall(callId, { offer });
+
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          await CallSession.findOneAndUpdate(
+            { callId },
+            { offer, updatedAt: new Date() }
+          );
+        }
+      } catch (e: any) {
+        console.error("set_offer DB error:", e.message);
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    // 3. ANSWER A CALL
     if (action === "answer") {
       const { callId, answer } = body;
       const updated = signalingStore.updateCall(callId, {
         status: "accepted",
         answer,
       });
+
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          await CallSession.findOneAndUpdate(
+            { callId },
+            {
+              status: "accepted",
+              answer,
+              updatedAt: new Date(),
+            }
+          );
+        }
+      } catch (err: any) {
+        console.error("Answer call DB error:", err.message);
+      }
+
       return NextResponse.json({ success: true, call: updated });
     }
 
-    // 3. DECLINE OR END A CALL
+    // 4. DECLINE OR END A CALL
     if (action === "end" || action === "decline") {
       const { callId, durationSeconds } = body;
       const finalStatus = action === "decline" ? "declined" : "ended";
@@ -81,46 +142,69 @@ export async function POST(req: NextRequest) {
         durationSeconds: durationSeconds || 0,
       });
 
-      // Update CallSession in MongoDB in background
-      connectToDatabase().then((dbRes) => {
+      try {
+        const dbRes = await connectToDatabase();
         if (dbRes.isConnected) {
-          CallSession.findOneAndUpdate(
-            { _id: callId },
+          await CallSession.findOneAndUpdate(
+            { callId },
             {
               status: finalStatus,
               durationSeconds: durationSeconds || 0,
               endedAt: new Date(),
+              updatedAt: new Date(),
             }
-          ).catch(() => {});
+          );
         }
-      });
+      } catch (err: any) {
+        console.error("End call DB error:", err.message);
+      }
 
       return NextResponse.json({ success: true, call: updated });
     }
 
-    // 4. ADD ICE CANDIDATE
+    // 5. ADD ICE CANDIDATE
     if (action === "candidate") {
       const { callId, candidate, isCaller } = body;
-      const success = signalingStore.addCandidate(callId, candidate, isCaller);
-      return NextResponse.json({ success });
+      signalingStore.addCandidate(callId, candidate, isCaller);
+
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected && candidate) {
+          const updateField = isCaller ? "callerCandidates" : "receiverCandidates";
+          await CallSession.findOneAndUpdate(
+            { callId },
+            {
+              $push: { [updateField]: candidate },
+              $set: { updatedAt: new Date() },
+            }
+          );
+        }
+      } catch (e: any) {
+        console.error("candidate DB error:", e.message);
+      }
+
+      return NextResponse.json({ success: true });
     }
 
-    // 5. SEND LIVE CALL REACTION (Floating heart burst during video call)
+    // 6. SEND LIVE CALL REACTION (Floating heart burst during video call)
     if (action === "reaction") {
       const { callId, emoji } = body;
       const call = signalingStore.getCall(callId);
       if (call) {
         (call as any).lastReaction = { emoji, timestamp: Date.now() };
       }
-      return NextResponse.json({ success: true });
-    }
 
-    // 6. UPDATE OFFER — sent by caller after camera + PeerConnection is ready
-    // This separates the "ring immediately" step from the SDP negotiation step
-    if (action === "set_offer") {
-      const { callId, offer } = body;
-      const updated = signalingStore.updateCall(callId, { offer });
-      return NextResponse.json({ success: true, call: updated });
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          await CallSession.findOneAndUpdate(
+            { callId },
+            { lastReaction: { emoji, timestamp: Date.now() } }
+          );
+        }
+      } catch {}
+
+      return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
@@ -135,15 +219,98 @@ export async function GET(req: NextRequest) {
   const username = searchParams.get("username")?.toLowerCase().trim();
   const callId = searchParams.get("callId");
 
+  // 1. Specific Call Query
   if (callId) {
-    const call = signalingStore.getCall(callId);
-    if (!call) {
+    // Check MongoDB first for absolute cross-serverless accuracy
+    try {
+      const dbRes = await connectToDatabase();
+      if (dbRes.isConnected) {
+        const dbCall = await CallSession.findOne({ callId });
+        if (dbCall) {
+          return NextResponse.json({
+            call: {
+              callId: dbCall.callId,
+              callerId: dbCall.callerId,
+              callerName: dbCall.callerName,
+              callerUsername: dbCall.callerUsername,
+              callerAvatar: dbCall.callerAvatar,
+              receiverId: dbCall.receiverId,
+              receiverName: dbCall.receiverName,
+              receiverUsername: dbCall.receiverUsername,
+              receiverAvatar: dbCall.receiverAvatar,
+              type: dbCall.type,
+              status: dbCall.status,
+              durationSeconds: dbCall.durationSeconds,
+              offer: dbCall.offer,
+              answer: dbCall.answer,
+              callerCandidates: dbCall.callerCandidates || [],
+              receiverCandidates: dbCall.receiverCandidates || [],
+              lastReaction: dbCall.lastReaction,
+              updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error("GET callId DB error:", err.message);
+    }
+
+    // Fallback to in-memory store
+    const memCall = signalingStore.getCall(callId);
+    if (!memCall) {
       return NextResponse.json({ error: "Call not found" }, { status: 404 });
     }
-    return NextResponse.json({ call });
+    return NextResponse.json({ call: memCall });
   }
 
+  // 2. Active Call Query by Username
   if (username) {
+    try {
+      const dbRes = await connectToDatabase();
+      if (dbRes.isConnected) {
+        const now = Date.now();
+        // Look for ringing or accepted calls updated in the last 60 seconds
+        const activeDbCall = await CallSession.findOne({
+          $or: [{ receiverUsername: username }, { callerUsername: username }],
+          status: { $in: ["ringing", "accepted"] },
+        }).sort({ updatedAt: -1 });
+
+        if (activeDbCall) {
+          const callUpdatedTime = activeDbCall.updatedAt ? new Date(activeDbCall.updatedAt).getTime() : now;
+          // Auto-expire stale ringing calls older than 45s
+          if (activeDbCall.status === "ringing" && now - callUpdatedTime > 45000) {
+            await CallSession.updateOne({ callId: activeDbCall.callId }, { status: "missed" });
+          } else {
+            return NextResponse.json({
+              activeCall: {
+                callId: activeDbCall.callId,
+                callerId: activeDbCall.callerId,
+                callerName: activeDbCall.callerName,
+                callerUsername: activeDbCall.callerUsername,
+                callerAvatar: activeDbCall.callerAvatar,
+                receiverId: activeDbCall.receiverId,
+                receiverName: activeDbCall.receiverName,
+                receiverUsername: activeDbCall.receiverUsername,
+                receiverAvatar: activeDbCall.receiverAvatar,
+                type: activeDbCall.type,
+                status: activeDbCall.status,
+                durationSeconds: activeDbCall.durationSeconds,
+                offer: activeDbCall.offer,
+                answer: activeDbCall.answer,
+                callerCandidates: activeDbCall.callerCandidates || [],
+                receiverCandidates: activeDbCall.receiverCandidates || [],
+                lastReaction: activeDbCall.lastReaction,
+                updatedAt: callUpdatedTime,
+              },
+            });
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("GET activeCall DB error:", err.message);
+    }
+
+    // In-memory fallback
     const activeCall = signalingStore.findActiveCallForUser(username);
     return NextResponse.json({ activeCall });
   }

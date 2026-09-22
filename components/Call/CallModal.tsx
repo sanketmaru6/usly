@@ -428,7 +428,7 @@ export default function CallModal({
         });
       } catch {}
 
-      // 9. Polling fallback every 600ms
+      // 9. Fast Polling fallback every 400ms for sub-second signaling on Vercel
       pollRef.current = setInterval(async () => {
         if (!isMountedRef.current) return;
         try {
@@ -438,7 +438,7 @@ export default function CallModal({
             if (d.call) await processSignal(d.call);
           }
         } catch {}
-      }, 600);
+      }, 400);
 
       if (callType === "audio") {
         setTimeout(() => {
