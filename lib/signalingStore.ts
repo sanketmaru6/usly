@@ -78,17 +78,6 @@ export const signalingEmitter = global.signalingEmitter;
 
 if (!global.liveUsers) {
   global.liveUsers = new Map();
-
-  // Prepopulate friendly starter discovery users
-  const defaultUsers = [
-    { username: "sweetheart", name: "Sweetheart", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=sweetheart", status: "online" as const, mood: "Missing you ❤️", lastSeen: Date.now() },
-    { username: "alexa", name: "Alexa Love", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=alexa", status: "online" as const, mood: "Happy & smiling 😊", lastSeen: Date.now() },
-    { username: "priya", name: "Priya Sharma", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=priya", status: "online" as const, mood: "In love 🥰", lastSeen: Date.now() },
-    { username: "rahul", name: "Rahul Verma", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=rahul", status: "online" as const, mood: "Thinking of you 💭", lastSeen: Date.now() },
-  ];
-  for (const u of defaultUsers) {
-    global.liveUsers.set(u.username, u);
-  }
 }
 
 export const signalingStore = {

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ messages: [] });
   }
 
-  // 1. Try fetching from MongoDB first
+  // 1. Fetch from MongoDB first
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
@@ -52,26 +52,7 @@ export async function GET(req: NextRequest) {
 
   // 2. Fallback to in-memory store
   const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername);
-  if (memMessages && memMessages.length > 0) {
-    return NextResponse.json({ messages: memMessages });
-  }
-
-  // 3. Return a starter friendly greeting if there are zero messages yet
-  return NextResponse.json({
-    messages: [
-      {
-        id: `welcome_${partnerUsername}_${myUsername}`,
-        senderUsername: partnerUsername,
-        senderName: partnerUsername.charAt(0).toUpperCase() + partnerUsername.slice(1),
-        senderAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUsername}`,
-        receiverUsername: myUsername,
-        type: "text",
-        content: `Hey! ✨ We're connected. We can now chat, send voice notes, love pings, and start HD video calls! 💖`,
-        reactions: [{ user: myUsername, emoji: "💖" }],
-        createdAt: new Date().toISOString(),
-      },
-    ],
-  });
+  return NextResponse.json({ messages: memMessages || [] });
 }
 
 export async function POST(req: NextRequest) {

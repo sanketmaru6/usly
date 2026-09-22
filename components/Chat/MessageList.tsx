@@ -189,13 +189,13 @@ export default function MessageList({
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4 relative scroll-smooth"
       >
-        {/* Welcome Romantic Banner if few messages */}
-        {messages.length <= 1 && (
-          <div className="text-center py-6 px-4 my-2 max-w-md mx-auto glass-panel rounded-3xl border border-usly-pink/30 space-y-2">
-            <div className="text-3xl animate-bounce">💌</div>
-            <h3 className="text-sm font-bold text-white">Your Secret Usly Space is Ready</h3>
+        {/* Welcome Romantic Banner if zero messages */}
+        {messages.length === 0 && (
+          <div className="text-center py-8 px-4 my-6 max-w-md mx-auto glass-panel rounded-3xl border border-usly-pink/30 space-y-3">
+            <div className="text-4xl animate-bounce">💌</div>
+            <h3 className="text-sm font-bold text-white">Start your conversation with {partnerName}</h3>
             <p className="text-xs text-zinc-300">
-              Every text, photo, whisper, and call here is just between the two of you. Send your first message!
+              Send a message, romantic love ping, voice whisper, or start a video call!
             </p>
           </div>
         )}

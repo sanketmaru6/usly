@@ -19,12 +19,14 @@ export async function GET(req: NextRequest) {
   const memoryConversations = signalingStore.getConversationsForUser(username);
   const conversationsMap = new Map<string, any>();
 
-  // 1. Seed with in-memory conversations first
+  // 1. In-memory conversations (from actual session activity)
   for (const c of memoryConversations) {
-    conversationsMap.set(c.username.toLowerCase(), c);
+    if (c.username && c.username !== username) {
+      conversationsMap.set(c.username.toLowerCase(), c);
+    }
   }
 
-  // 2. Fetch from MongoDB
+  // 2. Fetch real conversations from MongoDB
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
@@ -36,11 +38,11 @@ export async function GET(req: NextRequest) {
         .limit(300);
 
       for (const m of dbMessages) {
-        const s = m.senderUsername.toLowerCase();
-        const r = (m.receiverUsername || m.receiverId || "").toLowerCase();
-        const partnerUname = s === username ? r : s;
+        const s: string = (m.senderUsername || "").toLowerCase();
+        const r: string = (m.receiverUsername || m.receiverId || "").toLowerCase();
+        const partnerUname: string = s === username ? r : s;
 
-        if (partnerUname && !conversationsMap.has(partnerUname)) {
+        if (partnerUname && partnerUname !== username && !conversationsMap.has(partnerUname)) {
           let preview = m.content;
           if (m.type === "love_ping") {
             const ping = getPingOptionFromContent(m.content);
@@ -73,11 +75,11 @@ export async function GET(req: NextRequest) {
       });
 
       for (const reqItem of dbAccepted) {
-        const s = reqItem.senderUsername.toLowerCase();
-        const r = reqItem.receiverUsername.toLowerCase();
-        const partnerUname = s === username ? r : s;
+        const s: string = (reqItem.senderUsername || "").toLowerCase();
+        const r: string = (reqItem.receiverUsername || "").toLowerCase();
+        const partnerUname: string = s === username ? r : s;
 
-        if (partnerUname && !conversationsMap.has(partnerUname)) {
+        if (partnerUname && partnerUname !== username && !conversationsMap.has(partnerUname)) {
           conversationsMap.set(partnerUname, {
             username: partnerUname,
             name: reqItem.senderName || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
@@ -107,37 +109,6 @@ export async function GET(req: NextRequest) {
     }
   } catch (err: any) {
     console.error("Conversations GET DB error:", err.message);
-  }
-
-  // 3. If zero conversations, add starter contacts so the UI is immediately alive
-  if (conversationsMap.size === 0) {
-    const starterFriends = [
-      {
-        username: "sweetheart",
-        name: "Sweetheart",
-        avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=sweetheart",
-        lastMessage: "Missing you ❤️ Click here to chat!",
-        lastMessageType: "text",
-        lastMessageTime: new Date().toISOString(),
-        unreadCount: 1,
-        status: "online",
-      },
-      {
-        username: "alexa",
-        name: "Alexa Love",
-        avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=alexa",
-        lastMessage: "Ready for our video call? 📹✨",
-        lastMessageType: "text",
-        lastMessageTime: new Date(Date.now() - 3600000).toISOString(),
-        unreadCount: 0,
-        status: "online",
-      },
-    ];
-    for (const sf of starterFriends) {
-      if (sf.username !== username) {
-        conversationsMap.set(sf.username, sf);
-      }
-    }
   }
 
   return NextResponse.json({ conversations: Array.from(conversationsMap.values()) });

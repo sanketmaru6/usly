@@ -35,8 +35,8 @@ const GOOGLE_CLIENT_ID =
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("sanketmaru67@gmail.com");
-  const [name, setName] = useState("Sanket");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [gsiLoaded, setGsiLoaded] = useState(false);
@@ -253,41 +253,7 @@ export default function LoginPage() {
           <div className="border-t border-white/10 w-full" />
         </div>
 
-        {/* Quick User Switcher Pills */}
-        <div className="space-y-2">
-          <label className="block text-[10px] sm:text-[11px] font-bold text-zinc-300 uppercase tracking-wider">
-            Quick Sign-In As:
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => completeLogin("sanketmaru67@gmail.com", "Sanket")}
-              disabled={isLoading}
-              className={`p-2.5 rounded-2xl border text-left transition active:scale-95 flex flex-col justify-between ${
-                email === "sanketmaru67@gmail.com"
-                  ? "bg-usly-pink/20 border-usly-pink text-white shadow-lg shadow-usly-pink/20"
-                  : "bg-usly-surface border-white/10 text-zinc-300 hover:border-white/20"
-              }`}
-            >
-              <span className="text-xs font-black truncate">Sanket (67)</span>
-              <span className="text-[10px] text-zinc-400 truncate">sanketmaru67@gmail.com</span>
-            </button>
 
-            <button
-              type="button"
-              onClick={() => completeLogin("sanketmaru84@gmail.com", "Sanket Maru")}
-              disabled={isLoading}
-              className={`p-2.5 rounded-2xl border text-left transition active:scale-95 flex flex-col justify-between ${
-                email === "sanketmaru84@gmail.com"
-                  ? "bg-purple-500/20 border-purple-500 text-white shadow-lg shadow-purple-500/20"
-                  : "bg-usly-surface border-white/10 text-zinc-300 hover:border-white/20"
-              }`}
-            >
-              <span className="text-xs font-black truncate">Sanket (84)</span>
-              <span className="text-[10px] text-zinc-400 truncate">sanketmaru84@gmail.com</span>
-            </button>
-          </div>
-        </div>
 
         {/* 2. Email Login Form */}
         <form onSubmit={handleEmailFormSubmit} className="space-y-3.5 sm:space-y-4">

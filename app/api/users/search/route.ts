@@ -3,10 +3,16 @@ import { connectToDatabase } from "@/lib/db";
 import { User } from "@/lib/models/User";
 import { signalingStore } from "@/lib/signalingStore";
 
+export const dynamic = "force-dynamic";
+
+const DUMMY_USERNAMES = ["sweetheart", "alexa", "priya", "rahul"];
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q") || "";
-  const currentUsername = searchParams.get("currentUsername") || "";
+  const q = (searchParams.get("q") || "").trim().toLowerCase();
+  const currentUsername = (searchParams.get("currentUsername") || "").trim().toLowerCase();
+
+  const excluded = [currentUsername, ...DUMMY_USERNAMES].filter(Boolean);
 
   const dbRes = await connectToDatabase();
   let dbUsers: any[] = [];
@@ -14,35 +20,42 @@ export async function GET(req: NextRequest) {
   if (dbRes.isConnected) {
     try {
       const filter: any = {
-        username: { $ne: currentUsername.toLowerCase() },
+        username: { $nin: excluded },
       };
-      if (q.trim()) {
+      if (q) {
         filter.$or = [
-          { username: { $regex: q.trim(), $options: "i" } },
-          { name: { $regex: q.trim(), $options: "i" } },
+          { username: { $regex: q, $options: "i" } },
+          { name: { $regex: q, $options: "i" } },
         ];
       }
-      dbUsers = await User.find(filter).limit(20).select("username name avatar status mood lastSeen");
+      dbUsers = await User.find(filter)
+        .sort({ updatedAt: -1 })
+        .limit(30)
+        .select("username name avatar status mood lastSeen");
     } catch (e: any) {
       console.error("Search DB error:", e.message);
     }
   }
 
-  // Combine with in-memory users
+  // Combine with real in-memory users
   const memoryUsers = signalingStore.searchUsers(q, currentUsername);
-  const combinedMap = new Map();
+  const combinedMap = new Map<string, any>();
 
   for (const u of memoryUsers) {
-    combinedMap.set(u.username, u);
+    if (!excluded.includes(u.username.toLowerCase())) {
+      combinedMap.set(u.username.toLowerCase(), u);
+    }
   }
   for (const u of dbUsers) {
-    combinedMap.set(u.username, {
-      username: u.username,
-      name: u.name,
-      avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
-      status: u.status || "online",
-      mood: u.mood || "In love 🥰",
-    });
+    if (!excluded.includes(u.username.toLowerCase())) {
+      combinedMap.set(u.username.toLowerCase(), {
+        username: u.username,
+        name: u.name || u.username,
+        avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
+        status: u.status || "online",
+        mood: u.mood || "Ready to chat ✨",
+      });
+    }
   }
 
   return NextResponse.json({ users: Array.from(combinedMap.values()) });
