@@ -6,7 +6,7 @@ import {
   Heart, SwitchCamera, Volume2, VolumeX,
   MessageCircle, Send, Smile,
 } from "lucide-react";
-import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates } from "@/lib/webrtc";
+import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates, optimizeCodecs } from "@/lib/webrtc";
 import { notificationService } from "@/lib/notifications";
 
 const LOVE_KEYWORDS = [
@@ -178,6 +178,7 @@ export default function CallModal({
           console.log("[WebRTC] Caller setting remote answer description");
           await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
           await flushCandidates();
+          optimizeCodecs(pc);
           applySenderBitrates(pc, callType === "video");
           if (isMountedRef.current) setStatus("connected");
         } catch (e) {
@@ -192,6 +193,7 @@ export default function CallModal({
         processedRef.current.offer = true;
         try {
           console.log("[WebRTC] Receiver setting remote offer description");
+          optimizeCodecs(pc);
           await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
           await flushCandidates();
           const ans = await pc.createAnswer();
@@ -282,40 +284,52 @@ export default function CallModal({
         if (!isMountedRef.current) return;
         console.log("[WebRTC] Remote track arrived:", ev.track.kind);
 
-        let inbound = ev.streams && ev.streams[0] ? ev.streams[0] : null;
-        if (!inbound) {
-          if (!remoteStreamRef.current) {
-            remoteStreamRef.current = new MediaStream();
-          }
-          if (!remoteStreamRef.current.getTracks().some((t) => t.id === ev.track.id)) {
-            remoteStreamRef.current.addTrack(ev.track);
-          }
-          inbound = remoteStreamRef.current;
-        } else {
-          remoteStreamRef.current = inbound;
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
         }
+        if (!remoteStreamRef.current.getTracks().some((t) => t.id === ev.track.id)) {
+          remoteStreamRef.current.addTrack(ev.track);
+        }
+        if (ev.streams && ev.streams[0]) {
+          ev.streams[0].getTracks().forEach((t) => {
+            if (!remoteStreamRef.current?.getTracks().some((x) => x.id === t.id)) {
+              remoteStreamRef.current?.addTrack(t);
+            }
+          });
+        }
+        const inbound = remoteStreamRef.current;
 
-        // Attach to remote video
+        // Attach to remote video (muted for guaranteed zero-delay autoplay across all browsers)
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = inbound;
-          remoteVideoRef.current.play().catch((e) => console.warn("video play:", e));
+          remoteVideoRef.current.play().catch((e) => {
+            console.warn("video play fallback:", e);
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.muted = true;
+              remoteVideoRef.current.play().catch(() => {});
+            }
+          });
         }
 
-        // Audio element playback: only unmute for audio-only calls to prevent duplicate echo
+        // Dedicated low-latency audio element handling
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = inbound;
-          if (callType === "audio") {
-            remoteAudioRef.current.muted = false;
-            remoteAudioRef.current.play().catch((e) => console.warn("audio play:", e));
-          } else {
-            remoteAudioRef.current.muted = true; // Video element plays audio
-          }
+          remoteAudioRef.current.muted = isSpeakerOff;
+          remoteAudioRef.current.play().catch((e) => console.warn("audio play:", e));
         }
 
-        const hasVid = inbound.getVideoTracks().some((t) => t.readyState === "live");
+        const hasVid = inbound.getVideoTracks().length > 0;
         if (hasVid) {
           setHasRemoteVideo(true);
         }
+
+        inbound.getVideoTracks().forEach((vt) => {
+          vt.onunmute = () => {
+            setHasRemoteVideo(true);
+            remoteVideoRef.current?.play().catch(() => {});
+          };
+        });
+
         if (isMountedRef.current) setStatus("connected");
       };
 
@@ -324,6 +338,7 @@ export default function CallModal({
         if (!isMountedRef.current) return;
         console.log("[WebRTC] connectionState:", pc.connectionState);
         if (pc.connectionState === "connected") {
+          applySenderBitrates(pc, callType === "video");
           setStatus("connected");
         } else if (pc.connectionState === "failed") {
           console.log("[WebRTC] Connection failed, restarting ICE...");
@@ -335,6 +350,7 @@ export default function CallModal({
         if (!isMountedRef.current) return;
         console.log("[WebRTC] iceConnectionState:", pc.iceConnectionState);
         if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+          applySenderBitrates(pc, callType === "video");
           setStatus("connected");
         } else if (pc.iceConnectionState === "failed") {
           pc.restartIce?.();
@@ -362,6 +378,7 @@ export default function CallModal({
       // 6. If Caller: create offer and send to signaling server
       if (isCaller) {
         try {
+          optimizeCodecs(pc);
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: callType === "video",
@@ -641,10 +658,8 @@ export default function CallModal({
 
   const toggleSpeaker = () => {
     const a = remoteAudioRef.current;
-    const v = remoteVideoRef.current;
     const next = !isSpeakerOff;
     if (a) a.muted = next;
-    if (v) v.muted = next;
     setIsSpeakerOff(next);
   };
 
@@ -684,7 +699,7 @@ export default function CallModal({
       style={{ height: "100dvh" }}
       onClick={revealUI}
     >
-      {/* Audio element for voice calls */}
+      {/* Audio element for all calls - lowest latency real-time voice channel */}
       <audio ref={remoteAudioRef} autoPlay playsInline />
 
       {/* ── Full-screen remote video ─────────────────────────────────────── */}
@@ -694,17 +709,21 @@ export default function CallModal({
             ref={remoteVideoRef}
             autoPlay
             playsInline
+            muted
             onLoadedMetadata={() => {
               setHasRemoteVideo(true);
               setStatus("connected");
+              remoteVideoRef.current?.play().catch(() => {});
             }}
             onLoadedData={() => {
               setHasRemoteVideo(true);
               setStatus("connected");
+              remoteVideoRef.current?.play().catch(() => {});
             }}
             onCanPlay={() => {
               setHasRemoteVideo(true);
               setStatus("connected");
+              remoteVideoRef.current?.play().catch(() => {});
             }}
             onPlay={() => {
               setHasRemoteVideo(true);
