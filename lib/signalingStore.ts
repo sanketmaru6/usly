@@ -117,6 +117,22 @@ export const signalingStore = {
     return global.liveUsers.get(username.toLowerCase().trim()) || null;
   },
 
+  removeUser(username: string) {
+    const uname = username.toLowerCase().trim();
+    global.liveUsers.delete(uname);
+    global.liveRequests = global.liveRequests.filter(
+      (r) => r.senderUsername.toLowerCase() !== uname && r.receiverUsername.toLowerCase() !== uname
+    );
+    global.liveMessages = global.liveMessages.filter(
+      (m) => m.senderUsername.toLowerCase() !== uname && (m.receiverUsername || "").toLowerCase() !== uname
+    );
+    for (const [id, call] of global.liveSignals.entries()) {
+      if (call.callerUsername.toLowerCase() === uname || call.receiverUsername.toLowerCase() === uname) {
+        global.liveSignals.delete(id);
+      }
+    }
+  },
+
   // Connection Requests
   sendRequest(senderUsername: string, senderName: string, senderAvatar: string, receiverUsername: string) {
     const sUname = senderUsername.toLowerCase().trim();

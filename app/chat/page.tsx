@@ -2008,16 +2008,21 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Database status footer */}
+          {/* Database & Admin status footer */}
           <div className="p-3 border-t border-white/10 text-[10px] text-zinc-400 flex items-center justify-between">
             <div className="flex items-center space-x-1.5">
               <Database className="w-3 h-3 text-usly-pink" />
               <span>Status:</span>
               <span className={dbStatus.isConnected ? "text-emerald-400 font-semibold" : "text-amber-300"}>
-                {dbStatus.isConnected ? "MongoDB Connected" : "Realtime Active"}
+                {dbStatus.isConnected ? "MongoDB" : "Realtime"}
               </span>
             </div>
-            <span className="text-usly-coral font-mono">Usly</span>
+            <a
+              href="/admin"
+              className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-usly-pink/20 hover:text-white border border-white/10 text-zinc-300 font-mono transition text-[10px]"
+            >
+              Admin ⚙️
+            </a>
           </div>
         </aside>
 
