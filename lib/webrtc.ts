@@ -7,41 +7,27 @@ import { EventEmitter } from "events";
 // For mobile 4G / strict NAT / firewall, TURN relay is mandatory.
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
-    // ── STUN servers (no auth needed) ────────────────────────────────────────
+    // ── STUN servers (fast, zero latency peer discovery) ────────────────────
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    { urls: "stun:stun.ekiga.net:3478" },
-    { urls: "stun:stun.ideasip.com:3478" },
-    // ── TURN servers (relay through strict NAT, mobile data) ─────────────────
-    // openrelay.metered.ca — free public relay (no API key required)
+    { urls: "stun:stun.services.mozilla.com:3478" },
+    // ── TURN servers (Metered OpenRelay for NAT / cross-network / mobile data) ────────
     {
       urls: [
         "turn:openrelay.metered.ca:80",
         "turn:openrelay.metered.ca:443",
         "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp",
       ],
       username: "openrelayproject",
       credential: "openrelayproject",
     },
-    // numb.viagenie.ca — free TURN
-    {
-      urls: "turn:numb.viagenie.ca",
-      username: "webrtc@live.com",
-      credential: "muazkh",
-    },
-    // relay.webwormhole.io — another free relay
-    {
-      urls: "turn:relay.webwormhole.io:443?transport=tcp",
-      username: "foo",
-      credential: "bar",
-    },
   ],
   iceCandidatePoolSize: 10,
-  // "all" = try both STUN + TURN; use "relay" only if STUN fails too
   iceTransportPolicy: "all",
   bundlePolicy: "max-bundle",
   rtcpMuxPolicy: "require",

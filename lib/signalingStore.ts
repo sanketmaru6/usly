@@ -275,6 +275,10 @@ export const signalingStore = {
     return null;
   },
 
+  setCallQuietly(callId: string, call: LiveSignal) {
+    global.liveSignals.set(callId, call);
+  },
+
   updateCall(callId: string, updates: Partial<LiveSignal>) {
     const existing = global.liveSignals.get(callId);
     if (!existing) return null;

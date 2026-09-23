@@ -1276,7 +1276,7 @@ export default function ChatPage() {
     fetch("/api/calls/signal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "answer", callId: currentIncoming.callId }),
+      body: JSON.stringify({ action: "accept", callId: currentIncoming.callId }),
       keepalive: true,
     }).catch(() => {});
 

@@ -117,12 +117,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // 3. ANSWER A CALL (Guaranteed MongoDB persistence + instant in-memory broadcast)
-    if (action === "answer") {
-      const { callId, answer } = body;
+    // 3. ACCEPT A CALL (Receiver clicks Accept before WebRTC peer connection finishes setup)
+    if (action === "accept") {
+      const { callId } = body;
       const updated = signalingStore.updateCall(callId, {
         status: "accepted",
-        answer,
       });
 
       try {
@@ -133,10 +132,35 @@ export async function POST(req: NextRequest) {
             {
               $set: {
                 status: "accepted",
-                answer,
                 updatedAt: new Date(),
               },
             },
+            { upsert: true }
+          );
+        }
+      } catch (err: any) {
+        console.error("Accept call DB error:", err.message);
+      }
+
+      return NextResponse.json({ success: true, call: updated });
+    }
+
+    // 3b. ANSWER A CALL (With SDP answer payload from WebRTC)
+    if (action === "answer") {
+      const { callId, answer } = body;
+      const updateData: any = { status: "accepted" };
+      if (answer) updateData.answer = answer;
+
+      const updated = signalingStore.updateCall(callId, updateData);
+
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          const setFields: any = { status: "accepted", updatedAt: new Date() };
+          if (answer) setFields.answer = answer;
+          await CallSession.findOneAndUpdate(
+            { callId },
+            { $set: setFields },
             { upsert: true }
           );
         }
@@ -319,7 +343,7 @@ export async function GET(req: NextRequest) {
               lastReaction: dbCall.lastReaction || callObj?.lastReaction,
               updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
             };
-            signalingStore.updateCall(callId, mergedCall);
+            signalingStore.setCallQuietly(callId, mergedCall as any);
             callObj = mergedCall as any;
           }
         }

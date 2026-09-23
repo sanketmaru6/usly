@@ -145,27 +145,33 @@ export default function CallModal({
     notificationService.stopRingtone();
 
     // Internal state (no stale closures)
-    const processed  = { offer: false, answer: false };
+    const processed = { offer: false, answer: false };
     const candQueue: RTCIceCandidateInit[] = [];
-    const addedKeys  = new Set<string>();
-    // Buffer signals that arrive via SSE before pc is ready
+    const addedKeys = new Set<string>();
     const pendingSignals: any[] = [];
     let pendingRemoteAnswer: any = null;
+    let isSettingOffer = false;
+    let isSettingAnswer = false;
     let pcReady = false;
 
     // ── Candidate helpers ────────────────────────────────────────────────────
     function normalizeCand(raw: any): RTCIceCandidateInit | null {
       if (!raw) return null;
-      const obj = typeof raw === "string" ? { candidate: raw } : raw;
-      if (typeof obj.candidate !== "string" || !obj.candidate.trim()) return null;
-      const hasMLine = obj.sdpMLineIndex !== undefined && obj.sdpMLineIndex !== null;
-      const hasMid   = obj.sdpMid !== undefined && obj.sdpMid !== null && obj.sdpMid !== "";
-      return {
-        candidate:         obj.candidate.trim(),
-        sdpMid:            hasMid   ? String(obj.sdpMid)           : (hasMLine ? undefined : "0"),
-        sdpMLineIndex:     hasMLine ? Number(obj.sdpMLineIndex)     : (hasMid   ? undefined : 0),
-        usernameFragment:  obj.usernameFragment,
+      let obj = raw;
+      if (typeof raw === "string") {
+        try { obj = JSON.parse(raw); } catch { obj = { candidate: raw }; }
+      }
+      if (!obj || typeof obj.candidate !== "string" || !obj.candidate.trim()) return null;
+      const cand: RTCIceCandidateInit = {
+        candidate: obj.candidate.trim(),
       };
+      if (obj.sdpMid !== undefined && obj.sdpMid !== null) cand.sdpMid = String(obj.sdpMid);
+      if (obj.sdpMLineIndex !== undefined && obj.sdpMLineIndex !== null) cand.sdpMLineIndex = Number(obj.sdpMLineIndex);
+      if (obj.usernameFragment) cand.usernameFragment = String(obj.usernameFragment);
+      if (cand.sdpMid === undefined && cand.sdpMLineIndex === undefined) {
+        cand.sdpMLineIndex = 0;
+      }
+      return cand;
     }
 
     function candKey(c: RTCIceCandidateInit) {
@@ -206,6 +212,86 @@ export default function CallModal({
       }
     }
 
+    // ── Apply Remote Offer (Receiver) ───────────────────────────────────────
+    async function applyOffer(pc: RTCPeerConnection, rawOffer: any) {
+      if (processed.offer || isSettingOffer || pc.signalingState === "closed") return;
+      isSettingOffer = true;
+      try {
+        let offerObj = rawOffer;
+        if (typeof rawOffer === "string") {
+          try { offerObj = JSON.parse(rawOffer); } catch {}
+        }
+        if (!offerObj || !offerObj.sdp) {
+          isSettingOffer = false;
+          return;
+        }
+
+        console.log("[WebRTC] Receiver: applying remote offer, state:", pc.signalingState);
+        if (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(offerObj));
+          processed.offer = true;
+          await flushQueue(pc);
+          const ans = await pc.createAnswer();
+          await pc.setLocalDescription(ans);
+          applySenderBitrates(pc, callType === "video");
+          console.log("[WebRTC] Receiver: sending answer to signal endpoint");
+          await fetch("/api/calls/signal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "answer",
+              callId,
+              answer: { type: "answer", sdp: ans.sdp },
+            }),
+            keepalive: true,
+          });
+          if (isMountedRef.current) setStatus("connected");
+        }
+      } catch (e) {
+        console.error("[WebRTC] applyOffer error:", e);
+        if (pc.signalingState === "stable") {
+          processed.offer = false;
+        }
+      } finally {
+        isSettingOffer = false;
+      }
+    }
+
+    // ── Apply Remote Answer (Caller) ────────────────────────────────────────
+    async function applyAnswer(pc: RTCPeerConnection, rawAnswer: any) {
+      if (processed.answer || isSettingAnswer || pc.signalingState === "closed") return;
+      let answerObj = rawAnswer;
+      if (typeof rawAnswer === "string") {
+        try { answerObj = JSON.parse(rawAnswer); } catch {}
+      }
+      if (!answerObj || !answerObj.sdp) return;
+
+      if (pc.signalingState !== "have-local-offer") {
+        console.log("[WebRTC] Caller: buffering answer, state is", pc.signalingState);
+        pendingRemoteAnswer = answerObj;
+        return;
+      }
+
+      isSettingAnswer = true;
+      try {
+        console.log("[WebRTC] Caller: setting remote answer");
+        await pc.setRemoteDescription(new RTCSessionDescription(answerObj));
+        processed.answer = true;
+        pendingRemoteAnswer = null;
+        await flushQueue(pc);
+        applySenderBitrates(pc, callType === "video");
+        if (isMountedRef.current) setStatus("connected");
+        console.log("[WebRTC] Caller: connection successfully established!");
+      } catch (e) {
+        console.error("[WebRTC] applyAnswer error:", e);
+        if (pc.signalingState === "have-local-offer") {
+          processed.answer = false;
+        }
+      } finally {
+        isSettingAnswer = false;
+      }
+    }
+
     // ── ICE restart ─────────────────────────────────────────────────────────
     async function triggerIceRestart(pc: RTCPeerConnection) {
       if (!isCaller || pc.signalingState === "closed") return;
@@ -226,7 +312,7 @@ export default function CallModal({
 
     // ── Signal processor ────────────────────────────────────────────────────
     async function processSignal(pc: RTCPeerConnection, call: any) {
-      if (!call || !isMountedRef.current) return;
+      if (!call || !isMountedRef.current || pc.signalingState === "closed") return;
       if (call.callId && call.callId !== callId) return;
 
       if (call.status === "ended" || call.status === "declined" || call.status === "missed") {
@@ -244,49 +330,14 @@ export default function CallModal({
         }
       }
 
-      // Caller: receive answer
-      if (isCaller && call.answer && !processed.answer) {
-        if (pc.signalingState === "have-local-offer") {
-          processed.answer = true;
-          try {
-            console.log("[WebRTC] Caller: setting remote answer");
-            await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
-            await flushQueue(pc);
-            applySenderBitrates(pc, callType === "video");
-            if (isMountedRef.current) setStatus("connected");
-          } catch (e) {
-            console.error("[WebRTC] setRemoteDescription(answer) error:", e);
-            processed.answer = false; // allow retry
-          }
-        } else {
-          // Buffer answer if local offer is still being set
-          pendingRemoteAnswer = call.answer;
-        }
-      }
-
       // Receiver: receive offer
       if (!isCaller && call.offer && !processed.offer) {
-        if (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer") {
-          processed.offer = true;
-          try {
-            console.log("[WebRTC] Receiver: setting remote offer, creating answer");
-            await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
-            await flushQueue(pc);
-            const ans = await pc.createAnswer();
-            await pc.setLocalDescription(ans);
-            applySenderBitrates(pc, callType === "video");
-            await fetch("/api/calls/signal", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "answer", callId, answer: { type: "answer", sdp: ans.sdp } }),
-              keepalive: true,
-            });
-            if (isMountedRef.current) setStatus("connected");
-          } catch (e) {
-            console.error("[WebRTC] offer/answer error:", e);
-            processed.offer = false; // allow retry
-          }
-        }
+        await applyOffer(pc, call.offer);
+      }
+
+      // Caller: receive answer
+      if (isCaller && call.answer && !processed.answer) {
+        await applyAnswer(pc, call.answer);
       }
 
       // Apply remote ICE candidates
@@ -358,6 +409,7 @@ export default function CallModal({
         ev.track.onunmute = () => {
           if (!isMountedRef.current) return;
           setHasRemoteVideo(true);
+          if (isMountedRef.current) setStatus("connected");
           remoteVideoRef.current?.play().catch(() => {});
         };
       };
@@ -426,16 +478,7 @@ export default function CallModal({
 
           // Check if answer already arrived while offer was being created
           if (pendingRemoteAnswer && !processed.answer && pc.signalingState === "have-local-offer") {
-            processed.answer = true;
-            try {
-              console.log("[WebRTC] Caller: applying buffered answer");
-              await pc.setRemoteDescription(new RTCSessionDescription(pendingRemoteAnswer));
-              await flushQueue(pc);
-              applySenderBitrates(pc, callType === "video");
-              if (isMountedRef.current) setStatus("connected");
-            } catch (e) {
-              console.error("[WebRTC] buffered answer error:", e);
-            }
+            await applyAnswer(pc, pendingRemoteAnswer);
           }
 
           // Primary: set_offer (triggers SSE broadcast to receiver)
@@ -555,12 +598,9 @@ export default function CallModal({
           pcRef.current?.connectionState === "connected" ||
           pcRef.current?.iceConnectionState === "connected" ||
           pcRef.current?.iceConnectionState === "completed";
-        pollRef.current = setTimeout(poll, isConn ? 2000 : 100);
+        pollRef.current = setTimeout(poll, isConn ? 2000 : 150);
       };
       pollRef.current = setTimeout(poll, 50); // Start polling immediately
-
-      // For audio calls: mark UI connected once ICE is actually up
-      // (connection state handler above handles it, no forced timeout needed)
     }
 
     start();
