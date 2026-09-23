@@ -228,7 +228,10 @@ export default function CallModal({
       if (!call || !isMountedRef.current) return;
       if (call.callId && call.callId !== callId) return;
 
-      if (call.status === "ended" || call.status === "declined") {
+      if (call.status === "ended" || call.status === "declined" || call.status === "missed") {
+        notificationService.stopRingtone();
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+        pcRef.current?.close();
         onEndCallRef.current?.();
         return;
       }
@@ -707,7 +710,14 @@ export default function CallModal({
     fetch("/api/calls/signal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "end", callId, durationSeconds: durationRef.current }),
+      body: JSON.stringify({
+        action: "end",
+        callId,
+        durationSeconds: durationRef.current,
+        callerUsername: isCaller ? myUsername : partnerUsername,
+        receiverUsername: isCaller ? partnerUsername : myUsername,
+      }),
+      keepalive: true,
     }).catch(() => {});
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     pcRef.current?.close();

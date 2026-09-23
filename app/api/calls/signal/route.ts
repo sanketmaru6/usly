@@ -149,23 +149,51 @@ export async function POST(req: NextRequest) {
 
     // 4. DECLINE OR END A CALL
     if (action === "end" || action === "decline") {
-      const { callId, durationSeconds } = body;
+      const { callId, durationSeconds, callerUsername, receiverUsername } = body;
       const finalStatus = action === "decline" ? "declined" : "ended";
       const updated = signalingStore.updateCall(callId, {
         status: finalStatus,
         durationSeconds: durationSeconds || 0,
       });
 
+      // Explicitly broadcast call_ended event to both parties immediately
+      if (updated) {
+        signalingEmitter.emit("call:" + updated.callerUsername.toLowerCase().trim(), {
+          type: "call_ended",
+          call: updated,
+        });
+        signalingEmitter.emit("call:" + updated.receiverUsername.toLowerCase().trim(), {
+          type: "call_ended",
+          call: updated,
+        });
+        signalingEmitter.emit("call_update:" + callId, updated);
+      } else if (callerUsername || receiverUsername) {
+        if (callerUsername) {
+          signalingEmitter.emit("call:" + String(callerUsername).toLowerCase().trim(), {
+            type: "call_ended",
+            call: { callId, status: finalStatus },
+          });
+        }
+        if (receiverUsername) {
+          signalingEmitter.emit("call:" + String(receiverUsername).toLowerCase().trim(), {
+            type: "call_ended",
+            call: { callId, status: finalStatus },
+          });
+        }
+      }
+
       try {
         const dbRes = await connectToDatabase();
         if (dbRes.isConnected) {
-          await CallSession.findOneAndUpdate(
+          await CallSession.updateMany(
             { callId },
             {
-              status: finalStatus,
-              durationSeconds: durationSeconds || 0,
-              endedAt: new Date(),
-              updatedAt: new Date(),
+              $set: {
+                status: finalStatus,
+                durationSeconds: durationSeconds || 0,
+                endedAt: new Date(),
+                updatedAt: new Date(),
+              },
             }
           );
         }
@@ -312,6 +340,9 @@ export async function GET(req: NextRequest) {
     // Check in-memory first for instant ringing detection
     const memActive = signalingStore.findActiveCallForUser(username);
     if (memActive) {
+      if (memActive.status === "ended" || memActive.status === "declined" || memActive.status === "missed") {
+        return NextResponse.json({ activeCall: null });
+      }
       return NextResponse.json({ activeCall: memActive });
     }
 
@@ -328,8 +359,15 @@ export async function GET(req: NextRequest) {
 
         if (activeDbCall) {
           const callUpdatedTime = activeDbCall.updatedAt ? new Date(activeDbCall.updatedAt).getTime() : now;
-          if (activeDbCall.status === "ringing" && now - callUpdatedTime > 45000) {
+          // Check if memory has this call marked ended/declined/missed
+          const memCall = signalingStore.getCall(activeDbCall.callId);
+          if (memCall && (memCall.status === "ended" || memCall.status === "declined" || memCall.status === "missed")) {
+            return NextResponse.json({ activeCall: null });
+          }
+
+          if (activeDbCall.status === "ringing" && now - callUpdatedTime > 60000) {
             await CallSession.updateOne({ callId: activeDbCall.callId }, { status: "missed" });
+            return NextResponse.json({ activeCall: null });
           } else {
             return NextResponse.json({
               activeCall: {

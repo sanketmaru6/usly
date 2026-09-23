@@ -644,11 +644,27 @@ export default function ChatPage() {
               call.status === "ringing"
             ) {
               handleIncomingCallDetected(call);
-            } else if (call && (call.status === "ended" || call.status === "declined" || call.status === "missed")) {
+            } else if (
+              !call ||
+              call.status === "ended" ||
+              call.status === "declined" ||
+              call.status === "missed"
+            ) {
               ringingCallIdRef.current = null;
               setIncomingCall(null);
+              setActiveToast((prev) => (prev?.type === "call" ? null : prev));
               notificationService.stopRingtone();
             }
+          } catch {}
+        });
+
+        eventSource.addEventListener("call_ended", () => {
+          try {
+            ringingCallIdRef.current = null;
+            setIncomingCall(null);
+            setActiveCall(null);
+            setActiveToast((prev) => (prev?.type === "call" ? null : prev));
+            notificationService.stopRingtone();
           } catch {}
         });
 
@@ -881,10 +897,11 @@ export default function ChatPage() {
             ) {
               handleIncomingCallDetected(callData.activeCall);
             } else if (!callData.activeCall || callData.activeCall.status !== "ringing") {
-              // Caller hung up / call ended — stop ringtone immediately
-              if (ringingCallIdRef.current) {
+              // Caller hung up / call ended — stop ringtone immediately and dismiss alert & toast
+              if (ringingCallIdRef.current || incomingCall) {
                 ringingCallIdRef.current = null;
                 setIncomingCall(null);
+                setActiveToast((prev) => (prev?.type === "call" ? null : prev));
                 notificationService.stopRingtone();
               }
             }
