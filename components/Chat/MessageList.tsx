@@ -200,12 +200,13 @@ export default function MessageList({
           </div>
         )}
 
-        {messages.map((msg) => {
-          const isMe = msg.senderUsername.toLowerCase() === currentUsername.toLowerCase();
+        {messages.filter(Boolean).map((msg) => {
+          const isMe = (msg.senderUsername || "").toLowerCase() === (currentUsername || "").toLowerCase();
+          const contentStr = msg.content || "";
 
           // 1. LOVE PING MESSAGE TYPE (Love You, Miss You, Kiss, Hug, Thinking of You, Nudge)
           if (msg.type === "love_ping") {
-            const pingOpt = getPingOptionFromContent(msg.content);
+            const pingOpt = getPingOptionFromContent(contentStr);
             return (
               <div key={msg.id} className="flex justify-center my-3.5 px-2">
                 <div
@@ -219,7 +220,7 @@ export default function MessageList({
                     <Sparkles className="w-3.5 h-3.5 text-usly-coral animate-spin" />
                   </div>
                   <p className={`text-[11px] sm:text-xs font-semibold ${pingOpt.textColor} line-clamp-2`}>
-                    {msg.content.includes("•") ? msg.content.split("•")[1]?.trim() : pingOpt.subtitle}
+                    {contentStr.includes("•") ? contentStr.split("•")[1]?.trim() : (contentStr || pingOpt.subtitle)}
                   </p>
                   <div className="text-[9px] text-white/50 pt-0.5 font-mono">
                     {formatTime(msg.createdAt)}
@@ -241,10 +242,10 @@ export default function MessageList({
                   >
                     <div
                       className="cursor-pointer overflow-hidden rounded-xl sm:rounded-2xl relative group bg-black/40"
-                      onClick={() => setPreviewImageUrl(msg.content)}
+                      onClick={() => setPreviewImageUrl(contentStr)}
                     >
                       <img
-                        src={msg.content}
+                        src={contentStr}
                         alt="Shared photo"
                         className="max-h-72 sm:max-h-96 w-auto object-cover rounded-xl sm:rounded-2xl group-hover:scale-[1.02] transition-transform duration-200"
                         loading="lazy"
@@ -303,7 +304,7 @@ export default function MessageList({
               <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"} my-2`}>
                 <div className="flex flex-col items-end">
                   <div className="text-6xl p-2 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 hover:scale-110 transition-transform">
-                    {msg.content}
+                    {contentStr || "✨"}
                   </div>
                   <span className="text-[10px] text-zinc-400 mt-1 px-1">{formatTime(msg.createdAt)}</span>
                 </div>
@@ -322,7 +323,7 @@ export default function MessageList({
                 >
                   <div className="flex items-center space-x-3">
                     <button
-                      onClick={() => handlePlayVoice(msg.id, msg.content)}
+                      onClick={() => handlePlayVoice(msg.id, contentStr)}
                       className="w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition active:scale-95"
                     >
                       {playingAudioId === msg.id ? (
@@ -378,7 +379,7 @@ export default function MessageList({
                   }`}
                 >
                   {/* Text Content */}
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  <p className="whitespace-pre-wrap break-words">{contentStr}</p>
 
                   {/* Footer with timestamp */}
                   <div className="flex items-center justify-end space-x-1 mt-1 text-[9px] sm:text-[10px] text-white/70">
