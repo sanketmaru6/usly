@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Phone, PhoneOff, Video, Heart } from "lucide-react";
-
+import React, { useEffect, useState, useRef, memo } from "react";
+import { Phone, PhoneOff, Video, Heart, Lock } from "lucide-react";
 import { notificationService } from "@/lib/notifications";
 
 interface IncomingCallAlertProps {
@@ -14,7 +13,7 @@ interface IncomingCallAlertProps {
   onDecline: () => void;
 }
 
-export default function IncomingCallAlert({
+const IncomingCallAlert = memo(function IncomingCallAlert({
   callerName,
   callerUsername,
   callerAvatar,
@@ -22,128 +21,151 @@ export default function IncomingCallAlert({
   onAccept,
   onDecline,
 }: IncomingCallAlertProps) {
-  const [countdown, setCountdown] = useState(40);
+  // Exactly 60 seconds (1 full minute) ringing timer
+  const [countdown, setCountdown] = useState(60);
   const avatarSrc = callerAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${callerUsername}`;
 
-  // Countdown to auto-decline
+  const onDeclineRef = useRef(onDecline);
   useEffect(() => {
-    const iv = setInterval(() => setCountdown((c) => Math.max(0, c - 1)), 1000);
+    onDeclineRef.current = onDecline;
+  });
+
+  const onAcceptRef = useRef(onAccept);
+  useEffect(() => {
+    onAcceptRef.current = onAccept;
+  });
+
+  // Stable 60-second countdown
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(iv);
+          notificationService.stopRingtone();
+          onDeclineRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
     return () => {
       clearInterval(iv);
       notificationService.stopRingtone();
     };
   }, []);
 
-  // Auto-decline when countdown hits 0
-  useEffect(() => {
-    if (countdown === 0) {
-      notificationService.stopRingtone();
-      onDecline();
-    }
-  }, [countdown, onDecline]);
-
   const handleAccept = () => {
     notificationService.stopRingtone();
-    onAccept();
+    onAcceptRef.current();
   };
 
   const handleDecline = () => {
     notificationService.stopRingtone();
-    onDecline();
+    onDeclineRef.current();
   };
 
   return (
     <div
-      className="fixed inset-0 z-[9500] flex flex-col"
+      className="fixed inset-0 z-[9500] flex flex-col justify-between select-none overflow-hidden bg-zinc-950"
       style={{ height: "100dvh" }}
     >
-      {/* Full-screen blurred background (WhatsApp uses caller's avatar blurred) */}
-      <div className="absolute inset-0 overflow-hidden">
+      {/* ── Background: Smooth Blurred Caller Avatar with subtle dark overlay ── */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <img
           src={avatarSrc}
           alt=""
-          className="w-full h-full object-cover scale-110"
-          style={{ filter: "blur(40px) brightness(0.35) saturate(1.4)" }}
+          className="w-full h-full object-cover scale-125 opacity-30 filter blur-3xl transition-transform duration-1000"
         />
-        {/* Extra dark overlay */}
-        <div className="absolute inset-0 bg-black/50" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/50 to-black/90" />
       </div>
 
-      {/* Content */}
-      <div className="relative z-10 flex flex-col items-center flex-1 px-6">
-
-        {/* Top label */}
-        <div className="mt-16 mb-8 text-center">
-          <p className="text-white/60 text-sm font-medium tracking-wide">
-            Incoming {callType === "video" ? "Video" : "Voice"} Call
-          </p>
+      {/* ── Top Section: Call Type & Encryption Badge ── */}
+      <div className="relative z-10 pt-12 sm:pt-16 px-6 flex flex-col items-center text-center space-y-2">
+        <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-white/90 text-xs font-semibold shadow-lg">
+          {callType === "video" ? (
+            <Video className="w-3.5 h-3.5 text-emerald-400" />
+          ) : (
+            <Phone className="w-3.5 h-3.5 text-emerald-400" />
+          )}
+          <span>Incoming {callType === "video" ? "HD Video" : "Voice"} Call</span>
         </div>
 
-        {/* Caller avatar — large, centered, with ripple rings */}
-        <div className="relative flex items-center justify-center mb-6">
-          {/* Animated ripple rings */}
-          <div className="absolute w-52 h-52 rounded-full border border-white/10 animate-ping" style={{ animationDuration: "2s" }} />
-          <div className="absolute w-44 h-44 rounded-full border border-white/15 animate-ping" style={{ animationDuration: "2s", animationDelay: "0.5s" }} />
-          <div className="absolute w-36 h-36 rounded-full border border-white/20 animate-ping" style={{ animationDuration: "2s", animationDelay: "1s" }} />
+        <div className="flex items-center space-x-1 text-[11px] text-white/60">
+          <Lock className="w-3 h-3 text-emerald-400" />
+          <span>End-to-End Encrypted</span>
+        </div>
+      </div>
 
-          {/* Avatar */}
-          <div className="w-32 h-32 rounded-full overflow-hidden ring-4 ring-white/30 shadow-2xl relative">
+      {/* ── Middle Section: Avatar, Caller Name, & Pulsing Love Heart ── */}
+      <div className="relative z-10 flex flex-col items-center px-6 my-auto">
+        {/* Glowing Caller Avatar with Stable Ripple Effect */}
+        <div className="relative flex items-center justify-center mb-6">
+          <div className="absolute w-44 h-44 sm:w-52 sm:h-52 rounded-full border-2 border-usly-pink/30 animate-ping" style={{ animationDuration: "2.8s" }} />
+          <div className="absolute w-36 h-36 sm:w-44 sm:h-44 rounded-full border border-usly-pink/40 animate-ping" style={{ animationDuration: "2.8s", animationDelay: "0.9s" }} />
+
+          <div className="relative w-28 h-28 sm:w-36 sm:h-36 rounded-full overflow-hidden ring-4 ring-usly-pink/70 shadow-2xl shadow-usly-pink/30 bg-zinc-900">
             <img src={avatarSrc} alt={callerName} className="w-full h-full object-cover" />
           </div>
         </div>
 
-        {/* Caller name */}
-        <h1 className="text-3xl font-bold text-white text-center mb-1">{callerName}</h1>
-        <p className="text-white/50 text-sm text-center mb-1">@{callerUsername}</p>
-
-        {/* Ringing indicator */}
-        <div className="flex items-center space-x-1.5 mt-2 mb-2">
-          <Heart className="w-3.5 h-3.5 fill-pink-400 text-pink-400 animate-pulse" />
-          <span className="text-pink-300 text-xs font-medium">
-            {callType === "video" ? "Video calling you" : "Voice calling you"}
-          </span>
-          <Heart className="w-3.5 h-3.5 fill-pink-400 text-pink-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
-        </div>
-
-        {/* Auto-decline countdown */}
-        <p className="text-white/30 text-xs mt-1">
-          Auto-decline in {countdown}s
+        {/* Caller Info */}
+        <h1 className="text-2xl sm:text-3xl font-black text-white text-center tracking-tight mb-1">
+          {callerName}
+        </h1>
+        <p className="text-usly-coral/90 text-xs sm:text-sm font-mono text-center mb-3">
+          @{callerUsername}
         </p>
+
+        {/* Continuous Ringing Pill (Solid, non-blinking) */}
+        <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-usly-pink/15 border border-usly-pink/30 text-white text-xs shadow-md">
+          <Heart className="w-3.5 h-3.5 fill-usly-pink text-usly-pink animate-pulse" />
+          <span className="font-medium text-pink-200">
+            {callType === "video" ? "Calling your video..." : "Calling your phone..."}
+          </span>
+          <span className="font-mono text-[11px] text-white/70 pl-1 border-l border-white/20">
+            {countdown}s
+          </span>
+        </div>
       </div>
 
-      {/* Bottom: Decline + Accept buttons (WhatsApp style) */}
-      <div className="relative z-10 pb-16 px-10">
-        <div className="flex items-center justify-between">
-
-          {/* Decline */}
-          <div className="flex flex-col items-center space-y-3">
+      {/* ── Bottom Section: Touch-Friendly Mobile Accept / Decline Buttons ── */}
+      <div className="relative z-10 pb-12 sm:pb-16 px-8 sm:px-16 w-full max-w-md mx-auto">
+        <div className="flex items-center justify-around">
+          {/* Decline Button */}
+          <div className="flex flex-col items-center space-y-2">
             <button
               onClick={handleDecline}
-              className="w-18 h-18 rounded-full bg-red-500/90 active:bg-red-600 active:scale-90 flex items-center justify-center shadow-2xl shadow-red-500/40 transition"
-              style={{ width: 72, height: 72 }}
+              title="Decline Call"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-red-600 active:bg-red-700 active:scale-90 text-white flex items-center justify-center shadow-2xl shadow-red-600/50 transition duration-150"
             >
-              <PhoneOff className="w-8 h-8 text-white" />
+              <PhoneOff className="w-7 h-7 sm:w-9 sm:h-9" />
             </button>
-            <span className="text-white/80 text-sm font-medium">Decline</span>
+            <span className="text-white/80 text-xs sm:text-sm font-bold tracking-wide">Decline</span>
           </div>
 
-          {/* Accept */}
-          <div className="flex flex-col items-center space-y-3">
+          {/* Accept Button */}
+          <div className="flex flex-col items-center space-y-2">
             <button
               onClick={handleAccept}
-              className="rounded-full bg-emerald-500/90 active:bg-emerald-600 active:scale-90 flex items-center justify-center shadow-2xl shadow-emerald-500/40 transition"
-              style={{ width: 72, height: 72 }}
+              title="Accept Call"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-emerald-500 active:bg-emerald-600 active:scale-90 text-white flex items-center justify-center shadow-2xl shadow-emerald-500/50 transition duration-150 animate-bounce"
+              style={{ animationDuration: "1.8s" }}
             >
-              {callType === "video"
-                ? <Video className="w-8 h-8 text-white" />
-                : <Phone className="w-8 h-8 text-white" />}
+              {callType === "video" ? (
+                <Video className="w-7 h-7 sm:w-9 sm:h-9" />
+              ) : (
+                <Phone className="w-7 h-7 sm:w-9 sm:h-9" />
+              )}
             </button>
-            <span className="text-white/80 text-sm font-medium">
-              {callType === "video" ? "Accept" : "Answer"}
+            <span className="text-white font-bold text-xs sm:text-sm tracking-wide text-emerald-400">
+              {callType === "video" ? "Accept Video" : "Answer"}
             </span>
           </div>
         </div>
       </div>
     </div>
   );
-}
+});
+
+export default IncomingCallAlert;

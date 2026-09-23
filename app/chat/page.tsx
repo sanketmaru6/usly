@@ -2067,6 +2067,7 @@ export default function ChatPage() {
       {/* Incoming Call Ringing Alert */}
       {incomingCall && !activeCall && (
         <IncomingCallAlert
+          key={incomingCall.callId}
           callerName={incomingCall.callerName}
           callerUsername={incomingCall.callerUsername}
           callerAvatar={incomingCall.callerAvatar}
