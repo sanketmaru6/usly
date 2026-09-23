@@ -884,6 +884,11 @@ export default function ChatPage() {
           if (Array.isArray(reqData.incomingPending)) {
             updateIncomingRequestsIfChanged(reqData.incomingPending);
           }
+          if (Array.isArray(reqData.outgoingPending)) {
+            setSentRequestUsernames(
+              reqData.outgoingPending.map((r: any) => (r.receiverUsername || "").toLowerCase())
+            );
+          }
         }
 
         // 2. Fetch Messages for active selected chat
@@ -984,16 +989,11 @@ export default function ChatPage() {
     return () => clearInterval(interval);
   }, [fetchSearch, activeTab]);
 
-  // Send connection request
+  // Send connection request (chat starts only after acceptance)
   const handleSendRequest = async (targetUser: UserContact) => {
     if (!currentUser) return;
-    setSentRequestUsernames((prev) => [...prev, targetUser.username]);
-
-    // Add to local contacts immediately
-    setContacts((prev) => {
-      if (prev.some((c) => c.username.toLowerCase() === targetUser.username.toLowerCase())) return prev;
-      return [targetUser, ...prev];
-    });
+    const targetUname = targetUser.username.toLowerCase();
+    setSentRequestUsernames((prev) => [...prev.filter((u) => u !== targetUname), targetUname]);
 
     try {
       await fetch("/api/requests", {
@@ -1008,6 +1008,15 @@ export default function ChatPage() {
         }),
       });
       soundFX.playLovePing();
+      setActiveToast({
+        id: String(Date.now()),
+        senderName: targetUser.name,
+        senderUsername: targetUser.username,
+        senderAvatar: targetUser.avatar,
+        content: `Request sent to @${targetUser.username}! Chat will start once accepted. 💖`,
+        type: "text",
+        timestamp: Date.now(),
+      });
     } catch (e) {
       console.error(e);
     }
@@ -1539,89 +1548,20 @@ export default function ChatPage() {
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {contacts.length === 0 ? (
                 <div className="p-3 space-y-4">
-                  <div className="text-center py-5 px-3 space-y-2 glass-panel rounded-2xl border border-usly-pink/30">
+                  <div className="text-center py-7 px-4 space-y-3 glass-panel rounded-2xl border border-usly-pink/30 shadow-lg">
                     <div className="text-3xl animate-float">💌</div>
-                    <h4 className="text-xs font-bold text-white">Find People to Chat & Call</h4>
-                    <p className="text-[11px] text-zinc-300 leading-relaxed">
-                      Select any registered user below to send a message, love ping, or start an HD video call!
+                    <h4 className="text-xs font-bold text-white">No Active Chats Yet</h4>
+                    <p className="text-[11px] text-zinc-300 leading-relaxed max-w-xs mx-auto">
+                      Explore users and send connection requests. Once accepted, private chat and HD video calls will start here!
                     </p>
+                    <button
+                      onClick={() => setActiveTab("search")}
+                      className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      <span>Explore Users & Send Requests</span>
+                    </button>
                   </div>
-
-                  {searchResults.length > 0 ? (
-                    <div className="space-y-1.5">
-                      <div className="text-[10px] font-bold text-usly-coral uppercase tracking-wider px-1">
-                        Active Users ({searchResults.length})
-                      </div>
-                      {searchResults
-                        .filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase())
-                        .map((user) => (
-                        <div
-                          key={user.username}
-                          onClick={() => {
-                            setContacts((prev) => {
-                              if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                              const next = [user, ...prev];
-                              if (currentUser) {
-                                localStorage.setItem(
-                                  `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                  JSON.stringify(next)
-                                );
-                              }
-                              return next;
-                            });
-                            handleSelectContact(user);
-                          }}
-                          className="flex items-center justify-between p-2.5 rounded-2xl bg-usly-surface/60 border border-white/5 hover:border-usly-pink/40 transition cursor-pointer"
-                        >
-                          <div className="flex items-center space-x-2.5 min-w-0">
-                            <img
-                              src={user.avatar}
-                              alt={user.name}
-                              className="w-10 h-10 rounded-full border border-usly-pink/20 flex-shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <h4 className="text-xs font-bold text-white truncate">{user.name}</h4>
-                              <span className="text-[10px] text-zinc-400 font-mono block truncate">
-                                @{user.username}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center space-x-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => {
-                                setContacts((prev) => {
-                                  if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                                  const next = [user, ...prev];
-                                  if (currentUser) {
-                                    localStorage.setItem(
-                                      `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                      JSON.stringify(next)
-                                    );
-                                  }
-                                  return next;
-                                });
-                                handleSelectContact(user);
-                              }}
-                              className="px-3 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition"
-                            >
-                              Chat 💬
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6">
-                      <button
-                        onClick={() => setActiveTab("search")}
-                        className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 transition"
-                      >
-                        <Search className="w-3.5 h-3.5" />
-                        <span>Search by Username</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               ) : (
                 contacts
@@ -1964,8 +1904,10 @@ export default function ChatPage() {
                   searchResults
                     .filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase())
                     .map((user) => {
-                      const hasSent = sentRequestUsernames.includes(user.username);
-                      const isAlreadyContact = contacts.some((c) => c.username.toLowerCase() === user.username.toLowerCase());
+                      const uUname = user.username.toLowerCase();
+                      const hasSent = sentRequestUsernames.includes(uUname);
+                      const isAlreadyContact = contacts.some((c) => c.username.toLowerCase() === uUname);
+                      const incomingReq = incomingRequests.find((r) => r.senderUsername.toLowerCase() === uUname);
                       const isOnline = user.status === "online";
 
                       return (
@@ -1974,23 +1916,7 @@ export default function ChatPage() {
                           className="flex flex-col p-2.5 rounded-2xl bg-usly-surface/70 border border-white/5 hover:border-usly-pink/40 transition group hover:shadow-lg"
                         >
                           <div className="flex items-center justify-between">
-                            <div
-                              className="flex items-center space-x-2.5 min-w-0 cursor-pointer"
-                              onClick={() => {
-                                setContacts((prev) => {
-                                  if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                                  const next = [user, ...prev];
-                                  if (currentUser) {
-                                    localStorage.setItem(
-                                      `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                      JSON.stringify(next)
-                                    );
-                                  }
-                                  return next;
-                                });
-                                handleSelectContact(user);
-                              }}
-                            >
+                            <div className="flex items-center space-x-2.5 min-w-0">
                               <div className="relative flex-shrink-0">
                                 <img
                                   src={user.avatar}
@@ -1999,7 +1925,7 @@ export default function ChatPage() {
                                 />
                                 <span
                                   className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-usly-dark ${
-                                    isOnline ? "bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" : "bg-zinc-500"
+                                    isOnline ? "bg-emerald-500 shadow-sm shadow-emerald-500/50" : "bg-zinc-500"
                                   }`}
                                 />
                               </div>
@@ -2024,64 +1950,52 @@ export default function ChatPage() {
                               </div>
                             </div>
 
-                            {/* Actions */}
+                            {/* Actions based on connection status */}
                             <div className="flex items-center space-x-1.5 flex-shrink-0">
-                              <button
-                                onClick={() => {
-                                  setContacts((prev) => {
-                                    if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                                    const next = [user, ...prev];
-                                    if (currentUser) {
-                                      localStorage.setItem(
-                                        `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                        JSON.stringify(next)
-                                      );
-                                    }
-                                    return next;
-                                  });
-                                  handleSelectContact(user);
-                                }}
-                                title="Open chat"
-                                className="p-1.5 rounded-xl bg-usly-surface hover:bg-usly-pink/20 border border-usly-pink/40 text-usly-coral text-xs font-bold transition flex items-center space-x-1"
-                              >
-                                <MessageCircle className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">Chat</span>
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  setContacts((prev) => {
-                                    if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                                    const next = [user, ...prev];
-                                    if (currentUser) {
-                                      localStorage.setItem(
-                                        `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                        JSON.stringify(next)
-                                      );
-                                    }
-                                    return next;
-                                  });
-                                  handleSelectContact(user);
-                                  handleStartVideoCall(user);
-                                }}
-                                title="Start video call"
-                                className="p-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold transition flex items-center space-x-1"
-                              >
-                                <Video className="w-3.5 h-3.5" />
-                              </button>
-
-                              {!isAlreadyContact && (
+                              {isAlreadyContact ? (
+                                <>
+                                  <button
+                                    onClick={() => handleSelectContact(user)}
+                                    title="Open chat"
+                                    className="px-2.5 py-1.5 rounded-xl bg-usly-surface hover:bg-usly-pink/20 border border-usly-pink/40 text-usly-coral text-xs font-bold transition flex items-center space-x-1"
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                    <span>Chat</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      handleSelectContact(user);
+                                      handleStartVideoCall(user);
+                                    }}
+                                    title="Start video call"
+                                    className="p-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold transition"
+                                  >
+                                    <Video className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              ) : incomingReq ? (
+                                <button
+                                  onClick={() => handleAcceptRequest(incomingReq)}
+                                  className="px-2.5 py-1.5 rounded-xl bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-md shadow-usly-pink/30 transition active:scale-95 flex items-center space-x-1"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Accept 💌</span>
+                                </button>
+                              ) : hasSent ? (
+                                <button
+                                  disabled
+                                  className="px-2.5 py-1.5 rounded-xl bg-white/10 text-zinc-400 text-xs font-medium cursor-not-allowed flex items-center space-x-1"
+                                >
+                                  <Clock className="w-3 h-3" />
+                                  <span>Requested ⏳</span>
+                                </button>
+                              ) : (
                                 <button
                                   onClick={() => handleSendRequest(user)}
-                                  disabled={hasSent}
-                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm flex items-center space-x-1 ${
-                                    hasSent
-                                      ? "bg-white/10 text-zinc-400"
-                                      : "bg-gradient-love text-white hover:opacity-95 active:scale-95"
-                                  }`}
+                                  className="px-3 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition flex items-center space-x-1"
                                 >
-                                  <Heart className="w-3 h-3" />
-                                  <span>{hasSent ? "Sent ✓" : "Request"}</span>
+                                  <Heart className="w-3 h-3 fill-white/20" />
+                                  <span>Request 💖</span>
                                 </button>
                               )}
                             </div>
