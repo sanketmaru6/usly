@@ -266,7 +266,7 @@ export default function MessageList({
                     {msg.reactions && msg.reactions.length > 0 && (
                       <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-usly-surface/95 border border-usly-pink/40 px-1.5 sm:px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
                         {msg.reactions.map((r, i) => (
-                          <span key={i} title={r.user}>
+                          <span key={`${r.user}_${r.emoji}_${i}`} title={r.user}>
                             {r.emoji}
                           </span>
                         ))}
@@ -389,7 +389,7 @@ export default function MessageList({
                   {msg.reactions && msg.reactions.length > 0 && (
                     <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-usly-surface/95 border border-usly-pink/40 px-1.5 sm:px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
                       {msg.reactions.map((r, i) => (
-                        <span key={i} title={r.user}>
+                        <span key={`${r.user}_${r.emoji}_${i}`} title={r.user}>
                           {r.emoji}
                         </span>
                       ))}

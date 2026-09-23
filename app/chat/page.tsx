@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import {
@@ -129,6 +129,53 @@ export default function ChatPage() {
     type: "audio" | "video";
   } | null>(null);
 
+  // Synchronization refs for stable SSE and async event handlers without connection churn
+  const selectedUserRef = useRef(selectedUser);
+  useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
+
+  const activeCallRef = useRef(activeCall);
+  useEffect(() => { activeCallRef.current = activeCall; }, [activeCall]);
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  const contactsRef = useRef(contacts);
+  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
+
+  // Track active ringing callId to strictly prevent duplicate notifications / double rings
+  const ringingCallIdRef = useRef<string | null>(null);
+
+  // Single unified incoming call handler — guarantees notification fires ONLY ONCE
+  const handleIncomingCallDetected = (call: {
+    callId: string;
+    callerName: string;
+    callerUsername: string;
+    callerAvatar?: string;
+    type?: "audio" | "video";
+  }) => {
+    if (activeCallRef.current || ringingCallIdRef.current === call.callId) {
+      return;
+    }
+    ringingCallIdRef.current = call.callId;
+
+    setIncomingCall({
+      callId: call.callId,
+      callerName: call.callerName,
+      callerUsername: call.callerUsername,
+      callerAvatar: call.callerAvatar,
+      type: call.type || "video",
+    });
+
+    notificationService.notifyIncomingCall(
+      call.callerName,
+      call.callerUsername,
+      call.type || "video",
+      call.callerAvatar,
+      undefined,
+      call.callId
+    );
+  };
+
   // 1. Initialize current user from Session or localStorage & Request Notifications
   useEffect(() => {
     if (authStatus === "loading") return;
@@ -215,13 +262,15 @@ export default function ChatPage() {
       .catch(() => {});
   }, [session, authStatus, router]);
 
-  // 2. Load cached messages whenever selectedUser changes
+  // 2. Load cached messages whenever selectedUser changes with race condition protection
   useEffect(() => {
     if (!currentUser || !selectedUser) return;
+    let isCancelled = false;
 
     localStorage.setItem(`usly_active_partner_${currentUser.username}`, selectedUser.username);
 
-    // Instant load from localStorage cache
+    // Instant load from localStorage cache OR immediately reset to [] to prevent previous chat messages from displaying
+    let foundCache = false;
     try {
       const cachedMsgsStr = localStorage.getItem(
         `usly_msgs_${currentUser.username}_${selectedUser.username}`
@@ -230,15 +279,20 @@ export default function ChatPage() {
         const cachedMsgs = JSON.parse(cachedMsgsStr);
         if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
           setMessages(cachedMsgs);
+          foundCache = true;
         }
       }
     } catch {}
 
-    // Fetch latest messages from API
+    if (!foundCache) {
+      setMessages([]);
+    }
+
+    // Fetch latest messages from API with race condition protection
     fetch(`/api/messages?myUsername=${currentUser.username}&partnerUsername=${selectedUser.username}`)
       .then((r) => r.json())
       .then((data) => {
-        if (data.messages && Array.isArray(data.messages)) {
+        if (!isCancelled && data.messages && Array.isArray(data.messages)) {
           setMessages(data.messages);
           localStorage.setItem(
             `usly_msgs_${currentUser.username}_${selectedUser.username}`,
@@ -247,6 +301,10 @@ export default function ChatPage() {
         }
       })
       .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedUser?.username, currentUser?.username]);
 
   // 2b. Intercept mobile hardware back button — go to chat list, NOT login page
@@ -273,7 +331,10 @@ export default function ChatPage() {
   // Safety net: stop ALL call alerts whenever incomingCall clears (any path)
   useEffect(() => {
     if (!incomingCall) {
+      ringingCallIdRef.current = null;
       notificationService.stopRingtone();
+    } else {
+      ringingCallIdRef.current = incomingCall.callId;
     }
   }, [incomingCall]);
 
@@ -348,25 +409,11 @@ export default function ChatPage() {
             if (
               call &&
               call.receiverUsername.toLowerCase() === currentUser.username.toLowerCase() &&
-              call.status === "ringing" &&
-              !activeCall
+              call.status === "ringing"
             ) {
-              setIncomingCall({
-                callId: call.callId,
-                callerName: call.callerName,
-                callerUsername: call.callerUsername,
-                callerAvatar: call.callerAvatar,
-                type: call.type || "video",
-              });
-
-              // Trigger system notification + ringtone + vibration
-              notificationService.notifyIncomingCall(
-                call.callerName,
-                call.callerUsername,
-                call.type || "video",
-                call.callerAvatar
-              );
-            } else if (call && (call.status === "ended" || call.status === "declined")) {
+              handleIncomingCallDetected(call);
+            } else if (call && (call.status === "ended" || call.status === "declined" || call.status === "missed")) {
+              ringingCallIdRef.current = null;
               setIncomingCall(null);
               notificationService.stopRingtone();
             }
@@ -383,11 +430,14 @@ export default function ChatPage() {
             // Refresh contact list preview
             refreshConversations();
 
+            const curSelected = selectedUserRef.current;
+            const curActiveCall = activeCallRef.current;
+
             if (senderUname !== currentUser.username.toLowerCase()) {
               const isInCallWithSender =
-                activeCall && activeCall.partnerUsername?.toLowerCase() === senderUname;
+                curActiveCall && curActiveCall.partnerUsername?.toLowerCase() === senderUname;
               const isCurrentChatOpen =
-                (selectedUser && selectedUser.username.toLowerCase() === senderUname) ||
+                (curSelected && curSelected.username.toLowerCase() === senderUname) ||
                 isInCallWithSender;
 
               if (isCurrentChatOpen) {
@@ -425,7 +475,7 @@ export default function ChatPage() {
                   msg.content,
                   msg.type,
                   () => {
-                    const targetUser = contacts.find((c) => c.username === senderUname) || {
+                    const targetUser = contactsRef.current.find((c) => c.username.toLowerCase() === senderUname) || {
                       username: senderUname,
                       name: msg.senderName || senderUname,
                       avatar: senderAvatar,
@@ -454,15 +504,28 @@ export default function ChatPage() {
             }
 
             if (
-              selectedUser &&
-              (senderUname === selectedUser.username.toLowerCase() ||
-                receiverUname === selectedUser.username.toLowerCase())
+              curSelected &&
+              (senderUname === curSelected.username.toLowerCase() ||
+                receiverUname === curSelected.username.toLowerCase())
             ) {
               setMessages((prev) => {
                 if (prev.some((m) => m.id === msg.id)) return prev;
-                const next = [...prev, msg];
+                // Reconcile optimistic message if this is our sent message
+                const optMatch = prev.findIndex(
+                  (m) =>
+                    m.id.startsWith("opt_") &&
+                    m.senderUsername.toLowerCase() === senderUname &&
+                    m.content === msg.content
+                );
+                let next: MessageItem[];
+                if (optMatch > -1) {
+                  next = [...prev];
+                  next[optMatch] = msg;
+                } else {
+                  next = [...prev, msg];
+                }
                 localStorage.setItem(
-                  `usly_msgs_${currentUser.username}_${selectedUser.username}`,
+                  `usly_msgs_${currentUser.username}_${curSelected.username}`,
                   JSON.stringify(next)
                 );
                 return next;
@@ -500,14 +563,19 @@ export default function ChatPage() {
           setIncomingRequests(reqData.incomingPending || []);
         }
 
-        // 2. Fetch Messages for selected user
-        if (selectedUser) {
+        // 2. Fetch Messages for active selected chat
+        const currentSelected = selectedUserRef.current;
+        if (currentSelected) {
           const msgRes = await fetch(
-            `/api/messages?myUsername=${currentUser.username}&partnerUsername=${selectedUser.username}`
+            `/api/messages?myUsername=${currentUser.username}&partnerUsername=${currentSelected.username}`
           );
           if (msgRes.ok) {
             const msgData = await msgRes.json();
-            if (msgData.messages && Array.isArray(msgData.messages)) {
+            if (
+              msgData.messages &&
+              Array.isArray(msgData.messages) &&
+              selectedUserRef.current?.username === currentSelected.username
+            ) {
               setMessages((prev) => {
                 if (
                   msgData.messages.length > prev.length &&
@@ -521,7 +589,7 @@ export default function ChatPage() {
                   }
                 }
                 localStorage.setItem(
-                  `usly_msgs_${currentUser.username}_${selectedUser.username}`,
+                  `usly_msgs_${currentUser.username}_${currentSelected.username}`,
                   JSON.stringify(msgData.messages)
                 );
                 return msgData.messages;
@@ -531,7 +599,7 @@ export default function ChatPage() {
         }
 
         // 3. Fallback check for Incoming Calls (in case SSE missed it)
-        if (!activeCall) {
+        if (!activeCallRef.current) {
           const callRes = await fetch(`/api/calls/signal?username=${currentUser.username}`);
           if (callRes.ok) {
             const callData = await callRes.json();
@@ -540,32 +608,14 @@ export default function ChatPage() {
               callData.activeCall.receiverUsername.toLowerCase() === currentUser.username.toLowerCase() &&
               callData.activeCall.status === "ringing"
             ) {
-              setIncomingCall((prev) => {
-                if (prev?.callId === callData.activeCall.callId) return prev; // Already showing — don't re-ring
-
-                // New call detected by polling (SSE missed it) — ring now!
-                const { callerName, callerUsername, callerAvatar, type: callType, callId } = callData.activeCall;
-                notificationService.notifyIncomingCall(
-                  callerName,
-                  callerUsername,
-                  callType || "video",
-                  callerAvatar
-                );
-
-                return {
-                  callId,
-                  callerName,
-                  callerUsername,
-                  callerAvatar,
-                  type: callType || "video",
-                };
-              });
+              handleIncomingCallDetected(callData.activeCall);
             } else if (!callData.activeCall || callData.activeCall.status !== "ringing") {
               // Caller hung up / call ended — stop ringtone immediately
-              setIncomingCall((prev) => {
-                if (prev) notificationService.stopRingtone();
-                return null;
-              });
+              if (ringingCallIdRef.current) {
+                ringingCallIdRef.current = null;
+                setIncomingCall(null);
+                notificationService.stopRingtone();
+              }
             }
           }
         }
@@ -582,7 +632,7 @@ export default function ChatPage() {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       clearInterval(interval);
     };
-  }, [currentUser?.username, selectedUser?.username, activeCall]);
+  }, [currentUser?.username]);
 
   // Search users directory
   useEffect(() => {
@@ -726,7 +776,9 @@ export default function ChatPage() {
         lastMessage: preview,
         lastMessageTime: new Date().toISOString(),
       };
-      const filtered = prev.filter((c) => c.username !== selectedUser.username);
+      const filtered = prev.filter(
+        (c) => c.username.toLowerCase() !== selectedUser.username.toLowerCase()
+      );
       const nextContacts = [updatedContact, ...filtered];
       localStorage.setItem(
         `usly_contacts_${currentUser.username}`,
@@ -736,7 +788,7 @@ export default function ChatPage() {
     });
 
     try {
-      await fetch("/api/messages", {
+      const res = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -749,6 +801,21 @@ export default function ChatPage() {
           audioDuration,
         }),
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.message && data.message.id) {
+          setMessages((prev) => {
+            const next = prev.map((m) =>
+              m.id === optimistic.id ? { ...m, id: data.message.id } : m
+            );
+            localStorage.setItem(
+              `usly_msgs_${currentUser.username}_${selectedUser.username}`,
+              JSON.stringify(next)
+            );
+            return next;
+          });
+        }
+      }
     } catch (err) {
       console.error("Message send error:", err);
     }
@@ -878,6 +945,7 @@ export default function ChatPage() {
   // Answer incoming call
   const handleAcceptCall = () => {
     if (!incomingCall) return;
+    ringingCallIdRef.current = null;
     notificationService.stopRingtone();
     setActiveToast(null);
 
@@ -913,6 +981,7 @@ export default function ChatPage() {
   // Decline incoming call
   const handleDeclineCall = async () => {
     if (!incomingCall) return;
+    ringingCallIdRef.current = null;
     notificationService.stopRingtone();
     setActiveToast(null);
     try {
@@ -1520,6 +1589,7 @@ export default function ChatPage() {
               {/* Messages Feed */}
               <div className="flex-1 flex flex-col overflow-hidden bg-radial-gradient min-h-0">
                 <MessageList
+                  key={`msglist_${selectedUser.username}`}
                   messages={messages}
                   currentUsername={currentUser.username}
                   partnerName={selectedUser.name}
@@ -1528,6 +1598,7 @@ export default function ChatPage() {
 
                 {/* Message Input with Audio Whisper, Emojis, Stickers */}
                 <MessageInput
+                  key={`msginput_${selectedUser.username}`}
                   onSendMessage={handleSendMessage}
                   onSendLovePing={handleSendLovePing}
                 />
@@ -1602,7 +1673,7 @@ export default function ChatPage() {
       />
 
       {/* Profile Edit & Avatar Customizer Modal */}
-      {currentUser && (
+      {currentUser && isProfileModalOpen && (
         <ProfileEditModal
           isOpen={isProfileModalOpen}
           onClose={() => setIsProfileModalOpen(false)}

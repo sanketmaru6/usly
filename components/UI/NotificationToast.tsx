@@ -16,6 +16,11 @@ export default function NotificationToast({
   onDismiss,
   onSelectUser,
 }: NotificationToastProps) {
+  const onDismissRef = React.useRef(onDismiss);
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  });
+
   const [progress, setProgress] = useState(100);
   const DURATION = 4500;
 
@@ -32,14 +37,14 @@ export default function NotificationToast({
     }, 50);
 
     const timer = setTimeout(() => {
-      onDismiss();
+      onDismissRef.current();
     }, DURATION);
 
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [notification?.id, onDismiss]);
+  }, [notification?.id]);
 
   if (!notification) return null;
 

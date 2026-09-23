@@ -20,6 +20,7 @@ class NotificationService {
   private vibrationInterval: NodeJS.Timeout | null = null;
   // Track active call system notification so we can close it on answer/decline
   private activeCallNotification: Notification | null = null;
+  private activeRingingCallId: string | null = null;
 
   // Request browser notification permissions
   async requestPermission(): Promise<boolean> {
@@ -103,10 +104,19 @@ class NotificationService {
     callerUsername: string,
     callType: "audio" | "video",
     callerAvatar?: string,
-    onAnswer?: () => void
+    onAnswer?: () => void,
+    callId?: string
   ) {
+    // Deduplication: If already ringing for this call session, NEVER trigger a 2nd time!
+    if (callId && this.activeRingingCallId === callId) {
+      return;
+    }
+    if (callId) {
+      this.activeRingingCallId = callId;
+    }
+
     // Stop any previous call notification/ringtone first
-    this.stopRingtone();
+    this.stopRingtone(false); // Don't clear activeRingingCallId during internal re-init
 
     // 1. Start continuous audio ringtone
     this.ringtoneStopper = soundFX.playRingtone();
@@ -159,7 +169,10 @@ class NotificationService {
     }
   }
 
-  stopRingtone() {
+  stopRingtone(clearCallId: boolean = true) {
+    if (clearCallId) {
+      this.activeRingingCallId = null;
+    }
     // 1. Stop audio immediately
     if (this.ringtoneStopper) {
       this.ringtoneStopper();
