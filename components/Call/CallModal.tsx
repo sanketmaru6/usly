@@ -394,7 +394,7 @@ export default function CallModal({
         } catch {}
       };
 
-      // 6. Caller creates offer
+      // 6. Caller creates offer and sends both in initiate AND set_offer for 100% reliability
       if (isCaller) {
         try {
           const offer = await pc.createOffer({
@@ -402,13 +402,22 @@ export default function CallModal({
             offerToReceiveVideo: callType === "video",
           });
           await pc.setLocalDescription(offer);
-          console.log("[WebRTC] Caller: sending offer");
+          const offerPayload = { type: "offer", sdp: offer.sdp };
+          console.log("[WebRTC] Caller: sending offer via set_offer");
+          // Primary: set_offer (triggers SSE broadcast to receiver)
           await fetch("/api/calls/signal", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "set_offer", callId, offer: { type: "offer", sdp: offer.sdp } }),
+            body: JSON.stringify({ action: "set_offer", callId, offer: offerPayload }),
             keepalive: true,
           });
+          // Redundant: also update initiate with offer embedded (catches DB-miss race)
+          fetch("/api/calls/signal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "initiate", callId, callerUsername: myUsername, callerName: myUsername, receiverUsername: partnerUsername, type: callType, offer: offerPayload }),
+            keepalive: true,
+          }).catch(() => {});
         } catch (e) {
           console.error("[WebRTC] createOffer failed:", e);
         }
