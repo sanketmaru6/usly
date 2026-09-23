@@ -212,27 +212,58 @@ export default function ChatPage() {
     // Request browser notification permissions
     notificationService.requestPermission().catch(() => {});
 
-    // Instant load cached contacts from localStorage
+    // Instant load cached contacts from localStorage and restore active chat partner
     try {
       const cachedContactsStr = localStorage.getItem(`usly_contacts_${storedUsername}`);
+      let parsedContacts: UserContact[] = [];
       if (cachedContactsStr) {
         const parsed = JSON.parse(cachedContactsStr);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          parsedContacts = parsed;
           setContacts(parsed);
+        }
+      }
+
+      // Restore active chat partner on refresh so open chat is never hidden
+      const lastPartner = localStorage.getItem(`usly_active_partner_${storedUsername}`);
+      if (lastPartner && parsedContacts.length > 0) {
+        const matched = parsedContacts.find((c) => c.username.toLowerCase() === lastPartner.toLowerCase());
+        if (matched) {
+          setSelectedUser(matched);
         }
       }
     } catch {}
 
-    // Instant fetch live conversations from API
+    // Instant fetch live conversations from API and merge without dropping locally initiated chats
     fetch(`/api/conversations?username=${storedUsername}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.conversations && Array.isArray(data.conversations)) {
-          setContacts(data.conversations);
-          localStorage.setItem(
-            `usly_contacts_${storedUsername}`,
-            JSON.stringify(data.conversations)
-          );
+          setContacts((prev) => {
+            const apiMap = new Map<string, UserContact>();
+            for (const c of data.conversations) {
+              apiMap.set(c.username.toLowerCase(), c);
+            }
+            const updatedFromApi: UserContact[] = data.conversations.map((c: UserContact) => {
+              const existing = prev.find((p) => p.username.toLowerCase() === c.username.toLowerCase());
+              return {
+                ...c,
+                unreadCount: existing?.unreadCount || 0,
+              };
+            });
+            const preserved: UserContact[] = [];
+            for (const p of prev) {
+              if (!apiMap.has(p.username.toLowerCase())) {
+                preserved.push(p);
+              }
+            }
+            const merged = [...updatedFromApi, ...preserved];
+            localStorage.setItem(
+              `usly_contacts_${storedUsername}`,
+              JSON.stringify(merged)
+            );
+            return merged;
+          });
         }
       })
       .catch(() => {});
@@ -354,19 +385,35 @@ export default function ChatPage() {
           const convData = await convRes.json();
           if (convData.conversations && Array.isArray(convData.conversations)) {
             setContacts((prev) => {
-              // Merge unread counts from existing state
-              return convData.conversations.map((c: UserContact) => {
-                const existing = prev.find((p) => p.username === c.username);
+              const apiMap = new Map<string, UserContact>();
+              for (const c of convData.conversations) {
+                apiMap.set(c.username.toLowerCase(), c);
+              }
+
+              // Update existing contacts with API data and preserve unreadCount
+              const updatedFromApi: UserContact[] = convData.conversations.map((c: UserContact) => {
+                const existing = prev.find((p) => p.username.toLowerCase() === c.username.toLowerCase());
                 return {
                   ...c,
                   unreadCount: existing?.unreadCount || 0,
                 };
               });
+
+              // CRITICAL: Keep newly initiated chats or local contacts that haven't exchanged messages yet!
+              const preservedLocalContacts: UserContact[] = [];
+              for (const p of prev) {
+                if (!apiMap.has(p.username.toLowerCase())) {
+                  preservedLocalContacts.push(p);
+                }
+              }
+
+              const merged = [...updatedFromApi, ...preservedLocalContacts];
+              localStorage.setItem(
+                `usly_contacts_${currentUser.username}`,
+                JSON.stringify(merged)
+              );
+              return merged;
             });
-            localStorage.setItem(
-              `usly_contacts_${currentUser.username}`,
-              JSON.stringify(convData.conversations)
-            );
           }
         }
       } catch (err) {

@@ -102,6 +102,13 @@ export default function CallModal({
   // Auto-hide controls after 4.5s of no interaction (video mode, if user isn't typing)
   const revealUI = () => {
     setShowUI(true);
+    // Unblock browser autoplay restrictions on touch/click
+    if (remoteVideoRef.current && remoteVideoRef.current.paused) {
+      remoteVideoRef.current.play().catch(() => {});
+    }
+    if (callType === "audio" && remoteAudioRef.current && remoteAudioRef.current.paused) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
     if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
     if (callType === "video" && status === "connected" && !isInputFocusedRef.current) {
       uiTimerRef.current = setTimeout(() => {
@@ -165,41 +172,45 @@ export default function CallModal({
 
     // 1. Caller receives Answer from Receiver
     if (isCaller && call.answer && !processedRef.current.answer) {
-      processedRef.current.answer = true;
-      try {
-        console.log("[WebRTC] Caller setting remote answer description");
-        await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
-        await flushCandidates();
-        applySenderBitrates(pc, callType === "video");
-        if (isMountedRef.current) setStatus("connected");
-      } catch (e) {
-        console.error("[WebRTC] setRemoteDescription(answer) error:", e);
+      if (pc.signalingState === "have-local-offer") {
+        processedRef.current.answer = true;
+        try {
+          console.log("[WebRTC] Caller setting remote answer description");
+          await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
+          await flushCandidates();
+          applySenderBitrates(pc, callType === "video");
+          if (isMountedRef.current) setStatus("connected");
+        } catch (e) {
+          console.error("[WebRTC] setRemoteDescription(answer) error:", e);
+        }
       }
     }
 
     // 2. Receiver receives Offer from Caller
     if (!isCaller && call.offer && !processedRef.current.offer) {
-      processedRef.current.offer = true;
-      try {
-        console.log("[WebRTC] Receiver setting remote offer description");
-        await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
-        await flushCandidates();
-        const ans = await pc.createAnswer();
-        await pc.setLocalDescription(ans);
-        applySenderBitrates(pc, callType === "video");
-        console.log("[WebRTC] Receiver sending answer back");
-        await fetch("/api/calls/signal", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "answer",
-            callId,
-            answer: { type: "answer", sdp: ans.sdp },
-          }),
-        });
-        if (isMountedRef.current) setStatus("connected");
-      } catch (e) {
-        console.error("[WebRTC] Receiver Offer/Answer error:", e);
+      if (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer") {
+        processedRef.current.offer = true;
+        try {
+          console.log("[WebRTC] Receiver setting remote offer description");
+          await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+          await flushCandidates();
+          const ans = await pc.createAnswer();
+          await pc.setLocalDescription(ans);
+          applySenderBitrates(pc, callType === "video");
+          console.log("[WebRTC] Receiver sending answer back");
+          await fetch("/api/calls/signal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "answer",
+              callId,
+              answer: { type: "answer", sdp: ans.sdp },
+            }),
+          });
+          if (isMountedRef.current) setStatus("connected");
+        } catch (e) {
+          console.error("[WebRTC] Receiver Offer/Answer error:", e);
+        }
       }
     }
 

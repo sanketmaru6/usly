@@ -221,7 +221,13 @@ export async function GET(req: NextRequest) {
 
   // 1. Specific Call Query
   if (callId) {
-    // Check MongoDB first for absolute cross-serverless accuracy
+    // Check in-memory store first for instant sub-millisecond response during calls
+    const memCall = signalingStore.getCall(callId);
+    if (memCall) {
+      return NextResponse.json({ call: memCall });
+    }
+
+    // Check MongoDB fallback
     try {
       const dbRes = await connectToDatabase();
       if (dbRes.isConnected) {
@@ -255,21 +261,22 @@ export async function GET(req: NextRequest) {
       console.error("GET callId DB error:", err.message);
     }
 
-    // Fallback to in-memory store
-    const memCall = signalingStore.getCall(callId);
-    if (!memCall) {
-      return NextResponse.json({ error: "Call not found" }, { status: 404 });
-    }
-    return NextResponse.json({ call: memCall });
+    return NextResponse.json({ error: "Call not found" }, { status: 404 });
   }
 
   // 2. Active Call Query by Username
   if (username) {
+    // Check in-memory first for instant ringing detection
+    const memActive = signalingStore.findActiveCallForUser(username);
+    if (memActive) {
+      return NextResponse.json({ activeCall: memActive });
+    }
+
+    // Check MongoDB fallback
     try {
       const dbRes = await connectToDatabase();
       if (dbRes.isConnected) {
         const now = Date.now();
-        // Look for ringing or accepted calls updated in the last 60 seconds
         const activeDbCall = await CallSession.findOne({
           $or: [{ receiverUsername: username }, { callerUsername: username }],
           status: { $in: ["ringing", "accepted"] },
@@ -277,7 +284,6 @@ export async function GET(req: NextRequest) {
 
         if (activeDbCall) {
           const callUpdatedTime = activeDbCall.updatedAt ? new Date(activeDbCall.updatedAt).getTime() : now;
-          // Auto-expire stale ringing calls older than 45s
           if (activeDbCall.status === "ringing" && now - callUpdatedTime > 45000) {
             await CallSession.updateOne({ callId: activeDbCall.callId }, { status: "missed" });
           } else {
@@ -310,9 +316,7 @@ export async function GET(req: NextRequest) {
       console.error("GET activeCall DB error:", err.message);
     }
 
-    // In-memory fallback
-    const activeCall = signalingStore.findActiveCallForUser(username);
-    return NextResponse.json({ activeCall });
+    return NextResponse.json({ activeCall: null });
   }
 
   return NextResponse.json({ error: "Username or callId required" }, { status: 400 });
