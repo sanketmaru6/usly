@@ -14,6 +14,7 @@ import {
   Sparkles,
   Check,
   X,
+  RefreshCw,
   LogOut,
   Database,
   ArrowLeft,
@@ -903,24 +904,28 @@ export default function ChatPage() {
     };
   }, [currentUser?.username]);
 
-  // Search users directory (refreshes automatically on tab switch or query change)
-  useEffect(() => {
+  // Search users directory (refreshes automatically on tab switch, query change, or periodic interval)
+  const fetchSearch = useCallback(async () => {
     if (!currentUser) return;
-    const fetchSearch = async () => {
-      try {
-        const res = await fetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}&currentUsername=${encodeURIComponent(currentUser.username)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.users)) {
-            setSearchResults(data.users);
-          }
+    try {
+      const res = await fetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}&currentUsername=${encodeURIComponent(currentUser.username)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.users)) {
+          setSearchResults(data.users);
         }
-      } catch (e) {
-        console.error(e);
       }
-    };
+    } catch (e) {
+      console.error("Search fetch error:", e);
+    }
+  }, [searchQuery, currentUser?.username]);
+
+  useEffect(() => {
     fetchSearch();
-  }, [searchQuery, currentUser?.username, activeTab]);
+    // Auto-poll search/directory every 4 seconds when in search or messages tab
+    const interval = setInterval(fetchSearch, 4000);
+    return () => clearInterval(interval);
+  }, [fetchSearch, activeTab]);
 
   // Send connection request
   const handleSendRequest = async (targetUser: UserContact) => {
@@ -1704,111 +1709,203 @@ export default function ChatPage() {
           {/* TAB 3: SEARCH USER & SEND REQUEST */}
           {activeTab === "search" && (
             <div className="flex-1 flex flex-col p-3 overflow-hidden">
-              <div className="relative mb-3">
-                <Search className="absolute left-3.5 top-3 w-4 h-4 text-zinc-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search user by name or username..."
-                  className="w-full bg-usly-surface border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-400 focus:outline-none focus:border-usly-pink transition"
-                />
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-2">
-                <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider px-1">
-                  Users Directory
+              {/* Search Header Bar */}
+              <div className="space-y-2 mb-3">
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[11px] font-bold text-white uppercase tracking-wider">
+                      Explore Users
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-usly-pink/20 text-usly-coral font-bold font-mono">
+                      {searchResults.filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase()).length}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => fetchSearch()}
+                    title="Refresh user list"
+                    className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition text-[11px] flex items-center space-x-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Refresh</span>
+                  </button>
                 </div>
 
-                {searchResults.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-zinc-400 space-y-1">
-                    <p className="text-lg">👥</p>
-                    <p>
-                      {searchQuery
-                        ? `No users found matching "${searchQuery}"`
-                        : "No other registered users yet."}
-                    </p>
-                    <p className="text-[11px] text-zinc-500">
-                      Invite a friend or open a second window to connect!
-                    </p>
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-3 w-4 h-4 text-zinc-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by name or @username..."
+                    className="w-full bg-usly-surface border border-white/10 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-white placeholder-zinc-400 focus:outline-none focus:border-usly-pink transition"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-2.5 p-1 text-zinc-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Users List */}
+              <div className="flex-1 overflow-y-auto space-y-2 pr-0.5">
+                {searchResults.filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase()).length === 0 ? (
+                  <div className="text-center py-8 px-4 text-xs text-zinc-400 space-y-3 glass-panel rounded-2xl border border-white/5">
+                    <div className="w-12 h-12 mx-auto rounded-full bg-usly-pink/10 flex items-center justify-center text-2xl">
+                      👥
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-bold text-white text-xs">
+                        {searchQuery ? `No users matching "${searchQuery}"` : "No other users online right now"}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        Open Usly in another browser or incognito window to chat and test calls in realtime!
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (typeof window !== "undefined") {
+                          navigator.clipboard?.writeText(window.location.origin);
+                          alert("App URL copied to clipboard! Share it with your partner or friend.");
+                        }
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 transition"
+                    >
+                      📋 Copy Invite Link
+                    </button>
                   </div>
                 ) : (
                   searchResults
                     .filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase())
                     .map((user) => {
-                    const hasSent = sentRequestUsernames.includes(user.username);
-                    const isAlreadyContact = contacts.some((c) => c.username.toLowerCase() === user.username.toLowerCase());
+                      const hasSent = sentRequestUsernames.includes(user.username);
+                      const isAlreadyContact = contacts.some((c) => c.username.toLowerCase() === user.username.toLowerCase());
+                      const isOnline = user.status === "online";
 
-                    return (
-                      <div
-                        key={user.username}
-                        className="flex items-center justify-between p-2.5 rounded-2xl bg-usly-surface/60 border border-white/5 hover:border-usly-pink/30 transition cursor-pointer"
-                        onClick={() => {
-                          setContacts((prev) => {
-                            if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                            const next = [user, ...prev];
-                            if (currentUser) {
-                              localStorage.setItem(
-                                `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                JSON.stringify(next)
-                              );
-                            }
-                            return next;
-                          });
-                          handleSelectContact(user);
-                        }}
-                      >
-                        <div className="flex items-center space-x-2.5 min-w-0">
-                          <img
-                            src={user.avatar}
-                            alt={user.name}
-                            className="w-10 h-10 rounded-full border border-usly-pink/20 flex-shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <h4 className="text-xs font-bold text-white truncate">{user.name}</h4>
-                            <span className="text-[10px] text-zinc-400 font-mono block truncate">
-                              @{user.username}
-                            </span>
+                      return (
+                        <div
+                          key={user.username}
+                          className="flex flex-col p-2.5 rounded-2xl bg-usly-surface/70 border border-white/5 hover:border-usly-pink/40 transition group hover:shadow-lg"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div
+                              className="flex items-center space-x-2.5 min-w-0 cursor-pointer"
+                              onClick={() => {
+                                setContacts((prev) => {
+                                  if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
+                                  const next = [user, ...prev];
+                                  if (currentUser) {
+                                    localStorage.setItem(
+                                      `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                      JSON.stringify(next)
+                                    );
+                                  }
+                                  return next;
+                                });
+                                handleSelectContact(user);
+                              }}
+                            >
+                              <div className="relative flex-shrink-0">
+                                <img
+                                  src={user.avatar}
+                                  alt={user.name}
+                                  className="w-10 h-10 rounded-full border border-usly-pink/20 object-cover"
+                                />
+                                <span
+                                  className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-usly-dark ${
+                                    isOnline ? "bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" : "bg-zinc-500"
+                                  }`}
+                                />
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="flex items-center space-x-1.5">
+                                  <h4 className="text-xs font-bold text-white truncate">{user.name}</h4>
+                                  {isOnline && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                                      LIVE
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-zinc-400 font-mono block truncate">
+                                  @{user.username}
+                                </span>
+                                {user.mood && (
+                                  <span className="text-[10px] text-usly-pink/80 truncate block">
+                                    {user.mood}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex items-center space-x-1.5 flex-shrink-0">
+                              <button
+                                onClick={() => {
+                                  setContacts((prev) => {
+                                    if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
+                                    const next = [user, ...prev];
+                                    if (currentUser) {
+                                      localStorage.setItem(
+                                        `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                        JSON.stringify(next)
+                                      );
+                                    }
+                                    return next;
+                                  });
+                                  handleSelectContact(user);
+                                }}
+                                title="Open chat"
+                                className="p-1.5 rounded-xl bg-usly-surface hover:bg-usly-pink/20 border border-usly-pink/40 text-usly-coral text-xs font-bold transition flex items-center space-x-1"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Chat</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setContacts((prev) => {
+                                    if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
+                                    const next = [user, ...prev];
+                                    if (currentUser) {
+                                      localStorage.setItem(
+                                        `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                        JSON.stringify(next)
+                                      );
+                                    }
+                                    return next;
+                                  });
+                                  handleSelectContact(user);
+                                  handleStartVideoCall(user);
+                                }}
+                                title="Start video call"
+                                className="p-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold transition flex items-center space-x-1"
+                              >
+                                <Video className="w-3.5 h-3.5" />
+                              </button>
+
+                              {!isAlreadyContact && (
+                                <button
+                                  onClick={() => handleSendRequest(user)}
+                                  disabled={hasSent}
+                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm flex items-center space-x-1 ${
+                                    hasSent
+                                      ? "bg-white/10 text-zinc-400"
+                                      : "bg-gradient-love text-white hover:opacity-95 active:scale-95"
+                                  }`}
+                                >
+                                  <Heart className="w-3 h-3" />
+                                  <span>{hasSent ? "Sent ✓" : "Request"}</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-
-                        <div className="flex items-center space-x-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => {
-                              setContacts((prev) => {
-                                if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
-                                const next = [user, ...prev];
-                                if (currentUser) {
-                                  localStorage.setItem(
-                                    `usly_contacts_${currentUser.username.toLowerCase()}`,
-                                    JSON.stringify(next)
-                                  );
-                                }
-                                return next;
-                              });
-                              handleSelectContact(user);
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-usly-surface hover:bg-usly-pink/20 border border-usly-pink/40 text-usly-coral text-xs font-bold transition flex-shrink-0"
-                          >
-                            Chat
-                          </button>
-                          {!isAlreadyContact && (
-                            <button
-                              onClick={() => handleSendRequest(user)}
-                              disabled={hasSent}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-sm flex-shrink-0 ${
-                                hasSent
-                                  ? "bg-white/10 text-zinc-400"
-                                  : "bg-gradient-love text-white hover:opacity-95 active:scale-95"
-                              }`}
-                            >
-                              {hasSent ? "Requested ✓" : "Request"}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })
                 )}
               </div>
             </div>

@@ -14,109 +14,133 @@ export async function GET(req: NextRequest) {
 
   const combinedMap = new Map<string, any>();
 
-  // 1. Gather all in-memory live users
+  // 1. Always load ALL in-memory live users first (fastest, O(n))
   const memoryUsers = signalingStore.searchUsers(q, currentUsername);
   for (const u of memoryUsers) {
     const uname = u.username.toLowerCase();
-    if (uname !== currentUsername) {
-      combinedMap.set(uname, u);
+    if (uname && uname !== currentUsername) {
+      combinedMap.set(uname, {
+        username: u.username,
+        name: u.name || u.username,
+        avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
+        status: u.status || "online",
+        mood: u.mood || "Ready to chat ✨",
+      });
     }
   }
 
-  // 2. Fetch all registered users from MongoDB
+  // 2. Fetch from MongoDB (persists across server restarts)
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
+
+      // ── Primary: User collection ──────────────────────────────────────────
       const filter: any = {};
       if (currentUsername) {
-        filter.username = { $not: new RegExp(`^${currentUsername}$`, "i") };
+        filter.username = { $not: new RegExp(`^${currentUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
       }
       if (q) {
         filter.$or = [
-          { username: { $regex: q, $options: "i" } },
-          { name: { $regex: q, $options: "i" } },
+          { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
+          { name: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
         ];
       }
 
       const dbUsers = await User.find(filter)
         .sort({ updatedAt: -1 })
-        .limit(500)
-        .select("username name avatar status mood lastSeen");
+        .limit(200)
+        .select("username name avatar status mood lastSeen")
+        .lean();
 
       for (const u of dbUsers) {
         const uname = (u.username || "").toLowerCase();
         if (uname && uname !== currentUsername) {
+          // DB record wins over stale in-memory (more up-to-date name/avatar)
           combinedMap.set(uname, {
             username: u.username,
-            name: u.name || u.username,
-            avatar: u.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
-            status: u.status || "online",
-            mood: u.mood || "Ready to chat ✨",
+            name: (u.name as string) || u.username,
+            avatar: (u.avatar as string) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
+            status: (u.status as string) || "online",
+            mood: (u.mood as string) || "Ready to chat ✨",
           });
         }
       }
 
-      // 3. Fallback: discover users from existing FriendRequests
-      const reqQuery: any = {};
-      if (q) {
-        reqQuery.$or = [
-          { senderUsername: { $regex: q, $options: "i" } },
-          { receiverUsername: { $regex: q, $options: "i" } },
-        ];
-      }
-      const existingReqs = await FriendRequest.find(reqQuery).sort({ createdAt: -1 }).limit(100);
-      for (const r of existingReqs) {
-        const s = (r.senderUsername || "").toLowerCase();
-        const rec = (r.receiverUsername || "").toLowerCase();
-        if (s && s !== currentUsername && !combinedMap.has(s)) {
-          combinedMap.set(s, {
-            username: r.senderUsername,
-            name: r.senderName || r.senderUsername,
-            avatar: r.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderUsername}`,
-            status: "online",
-            mood: "Ready to chat ✨",
-          });
+      // ── Fallback: discover users from FriendRequests ──────────────────────
+      if (combinedMap.size < 20) {
+        const reqQuery: any = {};
+        if (q) {
+          reqQuery.$or = [
+            { senderUsername: { $regex: q, $options: "i" } },
+            { receiverUsername: { $regex: q, $options: "i" } },
+            { senderName: { $regex: q, $options: "i" } },
+          ];
         }
-        if (rec && rec !== currentUsername && !combinedMap.has(rec)) {
-          combinedMap.set(rec, {
-            username: r.receiverUsername,
-            name: r.receiverUsername,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.receiverUsername}`,
-            status: "online",
-            mood: "Ready to chat ✨",
-          });
+        const existingReqs = await FriendRequest.find(reqQuery)
+          .sort({ createdAt: -1 })
+          .limit(100)
+          .lean();
+
+        for (const r of existingReqs) {
+          const s = (r.senderUsername || "").toLowerCase();
+          const rec = (r.receiverUsername || "").toLowerCase();
+          if (s && s !== currentUsername && !combinedMap.has(s)) {
+            combinedMap.set(s, {
+              username: r.senderUsername,
+              name: (r as any).senderName || r.senderUsername,
+              avatar: (r as any).senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderUsername}`,
+              status: "online",
+              mood: "Ready to chat ✨",
+            });
+          }
+          if (rec && rec !== currentUsername && !combinedMap.has(rec)) {
+            combinedMap.set(rec, {
+              username: r.receiverUsername,
+              name: r.receiverUsername,
+              avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.receiverUsername}`,
+              status: "online",
+              mood: "Ready to chat ✨",
+            });
+          }
         }
       }
 
-      // 4. Fallback: discover users from existing Messages
-      const msgQuery: any = {};
-      if (q) {
-        msgQuery.$or = [
-          { senderUsername: { $regex: q, $options: "i" } },
-          { receiverUsername: { $regex: q, $options: "i" } },
-        ];
-      }
-      const existingMsgs = await Message.find(msgQuery).sort({ createdAt: -1 }).limit(100);
-      for (const m of existingMsgs) {
-        const s = (m.senderUsername || "").toLowerCase();
-        const rec = (m.receiverUsername || "").toLowerCase();
-        if (s && s !== currentUsername && !combinedMap.has(s)) {
-          combinedMap.set(s, {
-            username: m.senderUsername,
-            name: m.senderName || m.senderUsername,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.senderUsername}`,
-            status: "online",
-            mood: "Ready to chat ✨",
-          });
+      // ── Fallback: discover users from Messages ────────────────────────────
+      if (combinedMap.size < 20) {
+        const msgQuery: any = {};
+        if (q) {
+          msgQuery.$or = [
+            { senderUsername: { $regex: q, $options: "i" } },
+            { receiverUsername: { $regex: q, $options: "i" } },
+            { senderName: { $regex: q, $options: "i" } },
+          ];
         }
-        if (rec && rec !== currentUsername && !combinedMap.has(rec)) {
-          combinedMap.set(rec, {
-            username: m.receiverUsername,
-            name: m.receiverUsername,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.receiverUsername}`,
-            status: "online",
-            mood: "Ready to chat ✨",
-          });
+        const existingMsgs = await Message.find(msgQuery)
+          .sort({ createdAt: -1 })
+          .limit(100)
+          .lean();
+
+        for (const m of existingMsgs) {
+          const s = (m.senderUsername || "").toLowerCase();
+          const rec = (m.receiverUsername || "").toLowerCase();
+          if (s && s !== currentUsername && !combinedMap.has(s)) {
+            combinedMap.set(s, {
+              username: m.senderUsername,
+              name: (m as any).senderName || m.senderUsername,
+              avatar: (m as any).senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.senderUsername}`,
+              status: "online",
+              mood: "Ready to chat ✨",
+            });
+          }
+          if (rec && rec !== currentUsername && !combinedMap.has(rec)) {
+            combinedMap.set(rec, {
+              username: m.receiverUsername,
+              name: m.receiverUsername,
+              avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${m.receiverUsername}`,
+              status: "online",
+              mood: "Ready to chat ✨",
+            });
+          }
         }
       }
     }
@@ -124,5 +148,12 @@ export async function GET(req: NextRequest) {
     console.error("Search DB error:", e.message);
   }
 
-  return NextResponse.json({ users: Array.from(combinedMap.values()) });
+  // Sort: online users first, then alphabetically by name
+  const sorted = Array.from(combinedMap.values()).sort((a, b) => {
+    if (a.status === "online" && b.status !== "online") return -1;
+    if (b.status === "online" && a.status !== "online") return 1;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+
+  return NextResponse.json({ users: sorted, total: sorted.length });
 }
