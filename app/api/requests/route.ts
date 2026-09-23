@@ -38,15 +38,18 @@ export async function GET(req: NextRequest) {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
       const userRegex = new RegExp(`^${username}$`, "i");
+      const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
       const dbIncoming = await FriendRequest.find({
         receiverUsername: userRegex,
         status: "pending",
+        createdAt: { $gte: cutoff48h },
       }).sort({ createdAt: -1 });
 
       const dbOutgoing = await FriendRequest.find({
         senderUsername: userRegex,
         status: "pending",
+        createdAt: { $gte: cutoff48h },
       }).sort({ createdAt: -1 });
 
       const dbAccepted = await FriendRequest.find({

@@ -18,6 +18,7 @@ import {
   LogOut,
   Database,
   ArrowLeft,
+  Clock,
 } from "lucide-react";
 import CallModal from "@/components/Call/CallModal";
 import IncomingCallAlert from "@/components/Call/IncomingCallAlert";
@@ -74,6 +75,28 @@ function isLoveMessage(content: string = "", type?: string): boolean {
   const lower = content.toLowerCase();
   if (LOVE_KEYWORDS.some((kw) => lower.includes(kw))) return true;
   return LOVE_EMOJIS_REGEX.test(content);
+}
+
+// 48-Hour request expiration helper
+function getRemainingTime48h(createdAt?: string): { expired: boolean; text: string; hoursLeft: number; percent: number } {
+  if (!createdAt) return { expired: false, text: "48h left", hoursLeft: 48, percent: 100 };
+  const created = new Date(createdAt).getTime();
+  const totalMs = 48 * 60 * 60 * 1000;
+  const elapsedMs = Date.now() - created;
+  const remainingMs = totalMs - elapsedMs;
+
+  if (remainingMs <= 0) {
+    return { expired: true, text: "Expired", hoursLeft: 0, percent: 0 };
+  }
+
+  const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+  const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+  const percent = Math.max(3, Math.min(100, Math.round((remainingMs / totalMs) * 100)));
+
+  if (hours > 0) {
+    return { expired: false, text: `${hours}h ${minutes}m left`, hoursLeft: hours, percent };
+  }
+  return { expired: false, text: `${minutes}m left`, hoursLeft: 0, percent };
 }
 
 function mergeMessagesList(prev: MessageItem[], incoming: MessageItem[]): MessageItem[] {
@@ -135,6 +158,15 @@ export default function ChatPage() {
   const [activeTab, setActiveTab] = useState<"messages" | "calls" | "requests" | "search">("messages");
   const [contacts, setContacts] = useState<UserContact[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
+
+  // 48-Hour live countdown timer ticker
+  const [, setTimerTick] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimerTick(Date.now());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Stable comparator for incoming requests to prevent 1-second interval re-renders / blinking
   const updateIncomingRequestsIfChanged = useCallback((newList: IncomingRequest[]) => {
@@ -1642,6 +1674,94 @@ export default function ChatPage() {
                   );
                 })
               )}
+
+              {/* SECTION: NEW REQUESTS IN CHAT SECTION (AFTER ALL CHATS - 48 HOUR WINDOW) */}
+              {incomingRequests.filter((r) => !getRemainingTime48h(r.createdAt).expired).length > 0 && (
+                <div className="mt-4 pt-3 border-t border-white/10 space-y-2.5 px-1">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="w-2 h-2 rounded-full bg-usly-pink animate-pulse" />
+                      <span className="text-[11px] font-bold text-usly-coral uppercase tracking-wider">
+                        New Requests
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-usly-pink/20 text-usly-coral font-bold font-mono">
+                        48h window
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab("requests")}
+                      className="text-[10px] text-pink-300 hover:text-white transition font-medium hover:underline"
+                    >
+                      View All ({incomingRequests.filter((r) => !getRemainingTime48h(r.createdAt).expired).length})
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {incomingRequests
+                      .filter((req) => !getRemainingTime48h(req.createdAt).expired)
+                      .map((req) => {
+                        const timeLeft = getRemainingTime48h(req.createdAt);
+                        return (
+                          <div
+                            key={`chat-req-${req.id}`}
+                            className="p-3 rounded-2xl bg-usly-surface/90 border border-usly-pink/40 shadow-lg shadow-usly-pink/5 space-y-2.5 relative overflow-hidden group hover:border-usly-pink transition"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2.5 min-w-0">
+                                <div className="relative flex-shrink-0">
+                                  <img
+                                    src={req.senderAvatar}
+                                    alt={req.senderName}
+                                    className="w-10 h-10 rounded-full border border-usly-pink/40 object-cover"
+                                  />
+                                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-usly-pink ring-1 ring-usly-dark animate-ping" />
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="text-xs font-bold text-white truncate">{req.senderName}</h4>
+                                  <span className="text-[10px] text-zinc-400 font-mono block truncate">
+                                    @{req.senderUsername}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-usly-pink/15 border border-usly-pink/30 text-usly-coral text-[10px] font-bold font-mono">
+                                <Clock className="w-3 h-3 animate-pulse" />
+                                <span>{timeLeft.text}</span>
+                              </div>
+                            </div>
+
+                            {/* 48h expiration progress bar */}
+                            <div className="space-y-1">
+                              <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-gradient-love rounded-full transition-all duration-500"
+                                  style={{ width: `${timeLeft.percent}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-2 pt-0.5">
+                              <button
+                                onClick={() => handleAcceptRequest(req)}
+                                className="flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-xl bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-md shadow-usly-pink/30 transition active:scale-95"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Accept & Chat</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeclineRequest(req)}
+                                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 transition active:scale-95"
+                                title="Decline"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1678,11 +1798,16 @@ export default function ChatPage() {
           {/* TAB 2: INCOMING REQUESTS */}
           {activeTab === "requests" && (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              <div className="text-[11px] font-bold text-usly-coral uppercase tracking-wider px-1">
-                Pending Requests ({incomingRequests.length})
+              <div className="flex items-center justify-between px-1">
+                <div className="text-[11px] font-bold text-usly-coral uppercase tracking-wider">
+                  Pending Requests ({incomingRequests.filter((r) => !getRemainingTime48h(r.createdAt).expired).length})
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-usly-pink/20 text-usly-coral font-bold font-mono">
+                  Expires in 48h
+                </span>
               </div>
 
-              {incomingRequests.length === 0 ? (
+              {incomingRequests.filter((r) => !getRemainingTime48h(r.createdAt).expired).length === 0 ? (
                 <div className="text-center py-12 text-xs text-zinc-400 space-y-2">
                   <div className="text-2xl">✨</div>
                   <p>No pending requests.</p>
@@ -1691,44 +1816,66 @@ export default function ChatPage() {
                   </p>
                 </div>
               ) : (
-                incomingRequests.map((req) => (
-                  <div
-                    key={req.id}
-                    className="p-3.5 rounded-2xl bg-usly-surface/80 border border-usly-pink/30 shadow-lg space-y-3"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <img
-                        src={req.senderAvatar}
-                        alt={req.senderName}
-                        className="w-11 h-11 rounded-full border border-usly-pink/40 object-cover"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-sm font-bold text-white truncate">{req.senderName}</h4>
-                        <span className="text-xs text-zinc-400 font-mono block truncate">
-                          @{req.senderUsername}
-                        </span>
-                        <p className="text-[10px] text-pink-300 mt-0.5">wants to connect with you</p>
-                      </div>
-                    </div>
+                incomingRequests
+                  .filter((req) => !getRemainingTime48h(req.createdAt).expired)
+                  .map((req) => {
+                    const timeLeft = getRemainingTime48h(req.createdAt);
+                    return (
+                      <div
+                        key={req.id}
+                        className="p-3.5 rounded-2xl bg-usly-surface/80 border border-usly-pink/30 shadow-lg space-y-3 relative overflow-hidden"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3 min-w-0">
+                            <img
+                              src={req.senderAvatar}
+                              alt={req.senderName}
+                              className="w-11 h-11 rounded-full border border-usly-pink/40 object-cover flex-shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-sm font-bold text-white truncate">{req.senderName}</h4>
+                              <span className="text-xs text-zinc-400 font-mono block truncate">
+                                @{req.senderUsername}
+                              </span>
+                              <p className="text-[10px] text-pink-300 mt-0.5">wants to connect with you</p>
+                            </div>
+                          </div>
 
-                    <div className="flex items-center space-x-2 pt-1">
-                      <button
-                        onClick={() => handleAcceptRequest(req)}
-                        className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-xl bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-md shadow-usly-pink/30 transition active:scale-95"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Accept & Chat</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeclineRequest(req)}
-                        className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 transition active:scale-95"
-                        title="Decline"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                          <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-usly-pink/15 border border-usly-pink/30 text-usly-coral text-[11px] font-bold font-mono flex-shrink-0">
+                            <Clock className="w-3.5 h-3.5 animate-pulse" />
+                            <span>{timeLeft.text}</span>
+                          </div>
+                        </div>
+
+                        {/* Expiration Progress Bar */}
+                        <div className="space-y-1">
+                          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-love rounded-full transition-all duration-500"
+                              style={{ width: `${timeLeft.percent}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2 pt-1">
+                          <button
+                            onClick={() => handleAcceptRequest(req)}
+                            className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-xl bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-md shadow-usly-pink/30 transition active:scale-95"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Accept & Chat</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeclineRequest(req)}
+                            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 transition active:scale-95"
+                            title="Decline"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
               )}
             </div>
           )}

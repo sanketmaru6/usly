@@ -191,12 +191,19 @@ export const signalingStore = {
 
   getRequestsForUser(username: string) {
     const uname = username.toLowerCase().trim();
+    const cutoff48h = Date.now() - 48 * 60 * 60 * 1000;
     return {
       incomingPending: global.liveRequests.filter(
-        (r) => r.receiverUsername === uname && r.status === "pending"
+        (r) =>
+          r.receiverUsername === uname &&
+          r.status === "pending" &&
+          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff48h)
       ),
       outgoingPending: global.liveRequests.filter(
-        (r) => r.senderUsername === uname && r.status === "pending"
+        (r) =>
+          r.senderUsername === uname &&
+          r.status === "pending" &&
+          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff48h)
       ),
       acceptedConnections: global.liveRequests.filter(
         (r) => (r.receiverUsername === uname || r.senderUsername === uname) && r.status === "accepted"
