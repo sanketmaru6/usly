@@ -9,8 +9,6 @@ import {
   Volume2,
   ChevronDown,
   ArrowDownCircle,
-  ToggleLeft,
-  ToggleRight,
   X,
   Download,
   Maximize2,
@@ -52,28 +50,11 @@ export default function MessageList({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Auto-scroll control & smart scroll position detection
-  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [autoScroll] = useState<boolean>(true);
   const [isNearBottom, setIsNearBottom] = useState<boolean>(true);
   const [newMessagesBelow, setNewMessagesBelow] = useState<number>(0);
   const prevMessagesLengthRef = useRef<number>(0);
   const isNearBottomRef = useRef<boolean>(true);
-
-  // Load autoScroll preference
-  useEffect(() => {
-    const saved = localStorage.getItem("usly_auto_scroll");
-    if (saved !== null) {
-      setAutoScroll(saved === "true");
-    }
-  }, []);
-
-  const toggleAutoScroll = () => {
-    const next = !autoScroll;
-    setAutoScroll(next);
-    localStorage.setItem("usly_auto_scroll", String(next));
-    if (next) {
-      scrollToBottom();
-    }
-  };
 
   const checkIfNearBottom = () => {
     const el = containerRef.current;
@@ -150,39 +131,6 @@ export default function MessageList({
 
   return (
     <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
-      {/* Auto-Scroll Setting Bar */}
-      <div className="px-3 py-1 bg-black/30 border-b border-white/5 flex items-center justify-between text-[10px] text-zinc-400 flex-shrink-0">
-        <div className="flex items-center space-x-2">
-          <span>Chat Stream</span>
-          <span className="text-zinc-600">•</span>
-          <span className={autoScroll ? "text-emerald-400" : "text-amber-400"}>
-            {autoScroll ? "Auto-scroll ON" : "Auto-scroll Closed / Paused"}
-          </span>
-        </div>
-
-        <button
-          onClick={toggleAutoScroll}
-          className={`flex items-center space-x-1 px-2 py-0.5 rounded-lg border transition text-[10px] font-semibold active:scale-95 ${
-            autoScroll
-              ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/40"
-              : "bg-amber-950/40 border-amber-500/30 text-amber-300 hover:bg-amber-900/40"
-          }`}
-          title={autoScroll ? "Click to close auto-scroll" : "Click to enable auto-scroll"}
-        >
-          {autoScroll ? (
-            <>
-              <ToggleRight className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Close Auto-Scroll</span>
-            </>
-          ) : (
-            <>
-              <ToggleLeft className="w-3.5 h-3.5 text-amber-400" />
-              <span>Enable Auto-Scroll</span>
-            </>
-          )}
-        </button>
-      </div>
-
       {/* Messages Scroll Container */}
       <div
         ref={containerRef}
