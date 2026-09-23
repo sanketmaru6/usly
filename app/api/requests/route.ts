@@ -112,9 +112,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  finalIncoming.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const finalOutgoing = Array.from(outgoingMap.values()).sort(
+    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+
   return NextResponse.json({
     incomingPending: finalIncoming,
-    outgoingPending: Array.from(outgoingMap.values()),
+    outgoingPending: finalOutgoing,
     acceptedConnections: Array.from(acceptedMap.values()),
   });
 }

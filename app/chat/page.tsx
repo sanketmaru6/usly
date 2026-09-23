@@ -172,13 +172,20 @@ export default function ChatPage() {
   const updateIncomingRequestsIfChanged = useCallback((newList: IncomingRequest[]) => {
     if (!Array.isArray(newList)) return;
     setIncomingRequests((prev) => {
+      // Sort deterministically by senderUsername
+      const sortedNew = [...newList].sort((a, b) =>
+        (a.senderUsername || "").localeCompare(b.senderUsername || "")
+      );
+      const sortedPrev = [...prev].sort((a, b) =>
+        (a.senderUsername || "").localeCompare(b.senderUsername || "")
+      );
+
       if (
-        prev.length === newList.length &&
-        prev.every(
+        sortedPrev.length === sortedNew.length &&
+        sortedPrev.every(
           (p, idx) =>
-            p.id === newList[idx].id &&
-            p.status === newList[idx].status &&
-            p.senderUsername.toLowerCase() === newList[idx].senderUsername.toLowerCase()
+            p.senderUsername?.toLowerCase() === sortedNew[idx]?.senderUsername?.toLowerCase() &&
+            p.status === sortedNew[idx]?.status
         )
       ) {
         return prev; // EXACT SAME LIST - NO STATE UPDATE, ZERO BLINKING!
@@ -186,10 +193,10 @@ export default function ChatPage() {
       if (currentUserRef.current) {
         localStorage.setItem(
           `usly_incoming_requests_${currentUserRef.current.username.toLowerCase()}`,
-          JSON.stringify(newList)
+          JSON.stringify(sortedNew)
         );
       }
-      return newList;
+      return sortedNew;
     });
   }, []);
 
@@ -1701,10 +1708,11 @@ export default function ChatPage() {
                       .filter((req) => !getRemainingTime48h(req.createdAt).expired)
                       .map((req) => {
                         const timeLeft = getRemainingTime48h(req.createdAt);
+                        const stableKey = req.senderUsername ? req.senderUsername.toLowerCase() : req.id;
                         return (
                           <div
-                            key={`chat-req-${req.id}`}
-                            className="p-3 rounded-2xl bg-usly-surface/90 border border-usly-pink/40 shadow-lg shadow-usly-pink/5 space-y-2.5 relative overflow-hidden group hover:border-usly-pink transition"
+                            key={`chat-req-${stableKey}`}
+                            className="p-3 rounded-2xl bg-usly-surface/90 border border-usly-pink/40 shadow-lg shadow-usly-pink/5 space-y-2.5 relative overflow-hidden group hover:border-usly-pink transition-all"
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center space-x-2.5 min-w-0">
@@ -1714,7 +1722,7 @@ export default function ChatPage() {
                                     alt={req.senderName}
                                     className="w-10 h-10 rounded-full border border-usly-pink/40 object-cover"
                                   />
-                                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-usly-pink ring-1 ring-usly-dark animate-ping" />
+                                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-usly-pink ring-1 ring-usly-dark" />
                                 </div>
                                 <div className="min-w-0">
                                   <h4 className="text-xs font-bold text-white truncate">{req.senderName}</h4>
@@ -1725,7 +1733,7 @@ export default function ChatPage() {
                               </div>
 
                               <div className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-usly-pink/15 border border-usly-pink/30 text-usly-coral text-[10px] font-bold font-mono">
-                                <Clock className="w-3 h-3 animate-pulse" />
+                                <Clock className="w-3 h-3" />
                                 <span>{timeLeft.text}</span>
                               </div>
                             </div>
@@ -1734,7 +1742,7 @@ export default function ChatPage() {
                             <div className="space-y-1">
                               <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
                                 <div
-                                  className="h-full bg-gradient-love rounded-full transition-all duration-500"
+                                  className="h-full bg-gradient-love rounded-full transition-all duration-300"
                                   style={{ width: `${timeLeft.percent}%` }}
                                 />
                               </div>
@@ -1820,9 +1828,10 @@ export default function ChatPage() {
                   .filter((req) => !getRemainingTime48h(req.createdAt).expired)
                   .map((req) => {
                     const timeLeft = getRemainingTime48h(req.createdAt);
+                    const stableKey = req.senderUsername ? req.senderUsername.toLowerCase() : req.id;
                     return (
                       <div
-                        key={req.id}
+                        key={`req-tab-${stableKey}`}
                         className="p-3.5 rounded-2xl bg-usly-surface/80 border border-usly-pink/30 shadow-lg space-y-3 relative overflow-hidden"
                       >
                         <div className="flex items-center justify-between">
@@ -1842,7 +1851,7 @@ export default function ChatPage() {
                           </div>
 
                           <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-usly-pink/15 border border-usly-pink/30 text-usly-coral text-[11px] font-bold font-mono flex-shrink-0">
-                            <Clock className="w-3.5 h-3.5 animate-pulse" />
+                            <Clock className="w-3.5 h-3.5" />
                             <span>{timeLeft.text}</span>
                           </div>
                         </div>
@@ -1851,7 +1860,7 @@ export default function ChatPage() {
                         <div className="space-y-1">
                           <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-gradient-love rounded-full transition-all duration-500"
+                              className="h-full bg-gradient-love rounded-full transition-all duration-300"
                               style={{ width: `${timeLeft.percent}%` }}
                             />
                           </div>
