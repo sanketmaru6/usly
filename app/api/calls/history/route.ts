@@ -21,6 +21,8 @@ export async function GET(req: NextRequest) {
     try {
       const dbCalls = await CallSession.find({
         $or: [
+          { callerUsername: username },
+          { receiverUsername: username },
           { callerId: username },
           { receiverId: username },
           { callerName: username },
@@ -33,8 +35,10 @@ export async function GET(req: NextRequest) {
       // Fetch user avatars and names for enrichment
       const userNames = new Set<string>();
       dbCalls.forEach((c) => {
-        if (c.callerName) userNames.add(c.callerName.toLowerCase());
-        if (c.receiverName) userNames.add(c.receiverName.toLowerCase());
+        if (c.callerUsername) userNames.add(c.callerUsername.toLowerCase());
+        else if (c.callerName) userNames.add(c.callerName.toLowerCase());
+        if (c.receiverUsername) userNames.add(c.receiverUsername.toLowerCase());
+        else if (c.receiverName) userNames.add(c.receiverName.toLowerCase());
       });
 
       const usersMap = new Map<string, any>();
@@ -44,8 +48,8 @@ export async function GET(req: NextRequest) {
       }
 
       for (const call of dbCalls) {
-        const cCaller = (call.callerName || String(call.callerId)).toLowerCase();
-        const cReceiver = (call.receiverName || String(call.receiverId)).toLowerCase();
+        const cCaller = (call.callerUsername || call.callerName || String(call.callerId)).toLowerCase();
+        const cReceiver = (call.receiverUsername || call.receiverName || String(call.receiverId)).toLowerCase();
         const isOutgoing = cCaller === username;
         const partnerUsername = isOutgoing ? cReceiver : cCaller;
 
