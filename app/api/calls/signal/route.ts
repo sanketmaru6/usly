@@ -167,20 +167,21 @@ export async function POST(req: NextRequest) {
       const { callId, candidate, isCaller } = body;
       signalingStore.addCandidate(callId, candidate, isCaller);
 
-      try {
-        const dbRes = await connectToDatabase();
-        if (dbRes.isConnected && candidate) {
-          const updateField = isCaller ? "callerCandidates" : "receiverCandidates";
-          await CallSession.findOneAndUpdate(
-            { callId },
-            {
-              $push: { [updateField]: candidate },
-              $set: { updatedAt: new Date() },
+      if (candidate) {
+        connectToDatabase()
+          .then((dbRes) => {
+            if (dbRes.isConnected) {
+              const updateField = isCaller ? "callerCandidates" : "receiverCandidates";
+              CallSession.findOneAndUpdate(
+                { callId },
+                {
+                  $push: { [updateField]: candidate },
+                  $set: { updatedAt: new Date() },
+                }
+              ).catch((e: any) => console.error("candidate DB error:", e.message));
             }
-          );
-        }
-      } catch (e: any) {
-        console.error("candidate DB error:", e.message);
+          })
+          .catch(() => {});
       }
 
       return NextResponse.json({ success: true });
@@ -233,28 +234,29 @@ export async function GET(req: NextRequest) {
       if (dbRes.isConnected) {
         const dbCall = await CallSession.findOne({ callId });
         if (dbCall) {
-          return NextResponse.json({
-            call: {
-              callId: dbCall.callId,
-              callerId: dbCall.callerId,
-              callerName: dbCall.callerName,
-              callerUsername: dbCall.callerUsername,
-              callerAvatar: dbCall.callerAvatar,
-              receiverId: dbCall.receiverId,
-              receiverName: dbCall.receiverName,
-              receiverUsername: dbCall.receiverUsername,
-              receiverAvatar: dbCall.receiverAvatar,
-              type: dbCall.type,
-              status: dbCall.status,
-              durationSeconds: dbCall.durationSeconds,
-              offer: dbCall.offer,
-              answer: dbCall.answer,
-              callerCandidates: dbCall.callerCandidates || [],
-              receiverCandidates: dbCall.receiverCandidates || [],
-              lastReaction: dbCall.lastReaction,
-              updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
-            },
-          });
+          const callObj = {
+            callId: dbCall.callId,
+            callerId: dbCall.callerId,
+            callerName: dbCall.callerName,
+            callerUsername: dbCall.callerUsername,
+            callerAvatar: dbCall.callerAvatar,
+            receiverId: dbCall.receiverId,
+            receiverName: dbCall.receiverName,
+            receiverUsername: dbCall.receiverUsername,
+            receiverAvatar: dbCall.receiverAvatar,
+            type: dbCall.type,
+            status: dbCall.status,
+            durationSeconds: dbCall.durationSeconds,
+            offer: dbCall.offer,
+            answer: dbCall.answer,
+            callerCandidates: dbCall.callerCandidates || [],
+            receiverCandidates: dbCall.receiverCandidates || [],
+            lastReaction: dbCall.lastReaction,
+            updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
+          };
+          // Cache in memory for subsequent sub-millisecond polling queries
+          signalingStore.createCall(callObj as any);
+          return NextResponse.json({ call: callObj });
         }
       }
     } catch (err: any) {

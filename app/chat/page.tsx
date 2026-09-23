@@ -176,6 +176,63 @@ export default function ChatPage() {
     );
   };
 
+  // Unified contact selection: synchronously sets selectedUser, switches tab,
+  // clears unread count, and loads cached messages immediately with zero flash of previous messages
+  const handleSelectContact = (contact: UserContact) => {
+    if (!contact) return;
+    const partnerUname = contact.username.toLowerCase();
+    const myUname = (currentUserRef.current?.username || "").toLowerCase();
+
+    // 1. Immediately update selected contact & ensure messages tab
+    setSelectedUser(contact);
+    setActiveTab("messages");
+
+    // 2. Clear unread badge in contacts list
+    setContacts((prev) =>
+      prev.map((c) =>
+        c.username.toLowerCase() === partnerUname
+          ? { ...c, unreadCount: 0 }
+          : c
+      )
+    );
+
+    // 3. Immediately load messages for THIS contact from localStorage synchronously
+    if (myUname) {
+      localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
+      const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
+      try {
+        const cachedStr = localStorage.getItem(cacheKey);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (Array.isArray(cached)) {
+            setMessages(cached);
+          } else {
+            setMessages([]);
+          }
+        } else {
+          setMessages([]);
+        }
+      } catch {
+        setMessages([]);
+      }
+
+      // 4. Immediately fetch newest messages from server for fresh sync
+      fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (
+            selectedUserRef.current?.username.toLowerCase() === partnerUname &&
+            data.messages &&
+            Array.isArray(data.messages)
+          ) {
+            setMessages(data.messages);
+            localStorage.setItem(cacheKey, JSON.stringify(data.messages));
+          }
+        })
+        .catch(() => {});
+    }
+  };
+
   // 1. Initialize current user from Session or localStorage & Request Notifications
   useEffect(() => {
     if (authStatus === "loading") return;
@@ -214,37 +271,50 @@ export default function ChatPage() {
 
     // Instant load cached contacts from localStorage and restore active chat partner
     try {
-      const cachedContactsStr = localStorage.getItem(`usly_contacts_${storedUsername}`);
+      const cleanUsername = storedUsername.toLowerCase();
+      const cachedContactsStr =
+        localStorage.getItem(`usly_contacts_${cleanUsername}`) ||
+        localStorage.getItem(`usly_contacts_${storedUsername}`);
       let parsedContacts: UserContact[] = [];
       if (cachedContactsStr) {
         const parsed = JSON.parse(cachedContactsStr);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          parsedContacts = parsed;
-          setContacts(parsed);
+          parsedContacts = parsed.filter(
+            (c) => c.username.toLowerCase() !== cleanUsername
+          );
+          setContacts(parsedContacts);
         }
       }
 
       // Restore active chat partner on refresh so open chat is never hidden
-      const lastPartner = localStorage.getItem(`usly_active_partner_${storedUsername}`);
+      const lastPartner =
+        localStorage.getItem(`usly_active_partner_${cleanUsername}`) ||
+        localStorage.getItem(`usly_active_partner_${storedUsername}`);
       if (lastPartner && parsedContacts.length > 0) {
-        const matched = parsedContacts.find((c) => c.username.toLowerCase() === lastPartner.toLowerCase());
+        const matched = parsedContacts.find(
+          (c) => c.username.toLowerCase() === lastPartner.toLowerCase()
+        );
         if (matched) {
-          setSelectedUser(matched);
+          handleSelectContact(matched);
         }
       }
     } catch {}
 
     // Instant fetch live conversations from API and merge without dropping locally initiated chats
-    fetch(`/api/conversations?username=${storedUsername}`)
+    const cleanUsername = storedUsername.toLowerCase();
+    fetch(`/api/conversations?username=${cleanUsername}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.conversations && Array.isArray(data.conversations)) {
           setContacts((prev) => {
             const apiMap = new Map<string, UserContact>();
-            for (const c of data.conversations) {
+            const filteredApi = data.conversations.filter(
+              (c: UserContact) => c.username.toLowerCase() !== cleanUsername
+            );
+            for (const c of filteredApi) {
               apiMap.set(c.username.toLowerCase(), c);
             }
-            const updatedFromApi: UserContact[] = data.conversations.map((c: UserContact) => {
+            const updatedFromApi: UserContact[] = filteredApi.map((c: UserContact) => {
               const existing = prev.find((p) => p.username.toLowerCase() === c.username.toLowerCase());
               return {
                 ...c,
@@ -253,13 +323,16 @@ export default function ChatPage() {
             });
             const preserved: UserContact[] = [];
             for (const p of prev) {
-              if (!apiMap.has(p.username.toLowerCase())) {
+              if (
+                !apiMap.has(p.username.toLowerCase()) &&
+                p.username.toLowerCase() !== cleanUsername
+              ) {
                 preserved.push(p);
               }
             }
             const merged = [...updatedFromApi, ...preserved];
             localStorage.setItem(
-              `usly_contacts_${storedUsername}`,
+              `usly_contacts_${cleanUsername}`,
               JSON.stringify(merged)
             );
             return merged;
@@ -269,11 +342,15 @@ export default function ChatPage() {
       .catch(() => {});
 
     // Instant fetch all active/registered users for discovery
-    fetch(`/api/users/search?currentUsername=${storedUsername}`)
+    fetch(`/api/users/search?currentUsername=${cleanUsername}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.users && Array.isArray(data.users)) {
-          setSearchResults(data.users);
+          setSearchResults(
+            data.users.filter(
+              (u: any) => u.username.toLowerCase() !== cleanUsername
+            )
+          );
         }
       })
       .catch(() => {});
@@ -297,38 +374,32 @@ export default function ChatPage() {
   useEffect(() => {
     if (!currentUser || !selectedUser) return;
     let isCancelled = false;
+    const myUname = currentUser.username.toLowerCase();
+    const partnerUname = selectedUser.username.toLowerCase();
 
-    localStorage.setItem(`usly_active_partner_${currentUser.username}`, selectedUser.username);
+    localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
+    const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
 
-    // Instant load from localStorage cache OR immediately reset to [] to prevent previous chat messages from displaying
-    let foundCache = false;
+    // Fast check: if messages are empty, try loading from cache
     try {
-      const cachedMsgsStr = localStorage.getItem(
-        `usly_msgs_${currentUser.username}_${selectedUser.username}`
-      );
+      const cachedMsgsStr = localStorage.getItem(cacheKey);
       if (cachedMsgsStr) {
         const cachedMsgs = JSON.parse(cachedMsgsStr);
         if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
-          setMessages(cachedMsgs);
-          foundCache = true;
+          setMessages((prev) => (prev.length === 0 ? cachedMsgs : prev));
         }
       }
     } catch {}
 
-    if (!foundCache) {
-      setMessages([]);
-    }
-
     // Fetch latest messages from API with race condition protection
-    fetch(`/api/messages?myUsername=${currentUser.username}&partnerUsername=${selectedUser.username}`)
+    fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
       .then((r) => r.json())
       .then((data) => {
         if (!isCancelled && data.messages && Array.isArray(data.messages)) {
-          setMessages(data.messages);
-          localStorage.setItem(
-            `usly_msgs_${currentUser.username}_${selectedUser.username}`,
-            JSON.stringify(data.messages)
-          );
+          if (selectedUserRef.current?.username.toLowerCase() === partnerUname) {
+            setMessages(data.messages);
+            localStorage.setItem(cacheKey, JSON.stringify(data.messages));
+          }
         }
       })
       .catch(() => {});
@@ -530,7 +601,7 @@ export default function ChatPage() {
                 );
                 const nextContacts = [updatedContact, ...filtered];
                 localStorage.setItem(
-                  `usly_contacts_${currentUser.username}`,
+                  `usly_contacts_${currentUser.username.toLowerCase()}`,
                   JSON.stringify(nextContacts)
                 );
                 return nextContacts;
@@ -568,15 +639,7 @@ export default function ChatPage() {
                         avatar: senderAvatar,
                         status: "online" as const,
                       };
-                    setSelectedUser(targetUser);
-                    // Clear unread on open
-                    setContacts((prev) =>
-                      prev.map((c) =>
-                        c.username.toLowerCase() === senderUname
-                          ? { ...c, unreadCount: 0 }
-                          : c
-                      )
-                    );
+                    handleSelectContact(targetUser);
                   }
                 );
 
@@ -614,7 +677,7 @@ export default function ChatPage() {
                   next = [...prev, msg];
                 }
                 localStorage.setItem(
-                  `usly_msgs_${currentUser.username}_${curSelected.username}`,
+                  `usly_msgs_${currentUser.username.toLowerCase()}_${curSelected.username.toLowerCase()}`,
                   JSON.stringify(next)
                 );
                 return next;
@@ -625,7 +688,7 @@ export default function ChatPage() {
 
         // Instant Request Reception
         eventSource.addEventListener("request", () => {
-          fetch(`/api/requests?username=${currentUser.username}`)
+          fetch(`/api/requests?username=${currentUser.username.toLowerCase()}`)
             .then((r) => r.json())
             .then((data) => {
               if (data.incomingPending) setIncomingRequests(data.incomingPending);
@@ -646,7 +709,7 @@ export default function ChatPage() {
         // 1. Fetch Conversations & Requests
         refreshConversations();
 
-        const reqRes = await fetch(`/api/requests?username=${currentUser.username}`);
+        const reqRes = await fetch(`/api/requests?username=${currentUser.username.toLowerCase()}`);
         if (reqRes.ok) {
           const reqData = await reqRes.json();
           setIncomingRequests(reqData.incomingPending || []);
@@ -655,21 +718,23 @@ export default function ChatPage() {
         // 2. Fetch Messages for active selected chat
         const currentSelected = selectedUserRef.current;
         if (currentSelected) {
+          const myUname = currentUser.username.toLowerCase();
+          const partnerUname = currentSelected.username.toLowerCase();
           const msgRes = await fetch(
-            `/api/messages?myUsername=${currentUser.username}&partnerUsername=${currentSelected.username}`
+            `/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`
           );
           if (msgRes.ok) {
             const msgData = await msgRes.json();
             if (
               msgData.messages &&
               Array.isArray(msgData.messages) &&
-              selectedUserRef.current?.username === currentSelected.username
+              selectedUserRef.current?.username.toLowerCase() === partnerUname
             ) {
               setMessages((prev) => {
                 if (
                   msgData.messages.length > prev.length &&
                   prev.length > 0 &&
-                  msgData.messages[msgData.messages.length - 1].senderUsername !== currentUser.username
+                  msgData.messages[msgData.messages.length - 1].senderUsername.toLowerCase() !== myUname
                 ) {
                   const latestMsg = msgData.messages[msgData.messages.length - 1];
                   soundFX.playChatSound();
@@ -678,7 +743,7 @@ export default function ChatPage() {
                   }
                 }
                 localStorage.setItem(
-                  `usly_msgs_${currentUser.username}_${currentSelected.username}`,
+                  `usly_msgs_${myUname}_${partnerUname}`,
                   JSON.stringify(msgData.messages)
                 );
                 return msgData.messages;
@@ -791,8 +856,7 @@ export default function ChatPage() {
         lastMessage: "Connected! Click to chat ✨",
       };
       setContacts((prev) => [newContact, ...prev.filter((c) => c.username.toLowerCase() !== req.senderUsername.toLowerCase())]);
-      setSelectedUser(newContact);
-      setActiveTab("messages");
+      handleSelectContact(newContact);
       soundFX.playLovePing();
       setTriggerHeart(Date.now());
     } catch (e) {
@@ -824,6 +888,9 @@ export default function ChatPage() {
     audioDuration?: number
   ) => {
     if (!currentUser || !selectedUser) return;
+    const myUname = currentUser.username.toLowerCase();
+    const partnerUname = selectedUser.username.toLowerCase();
+    const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
 
     const optimistic: MessageItem = {
       id: "opt_" + Date.now(),
@@ -838,10 +905,7 @@ export default function ChatPage() {
 
     setMessages((prev) => {
       const next = [...prev, optimistic];
-      localStorage.setItem(
-        `usly_msgs_${currentUser.username}_${selectedUser.username}`,
-        JSON.stringify(next)
-      );
+      localStorage.setItem(cacheKey, JSON.stringify(next));
       return next;
     });
 
@@ -863,7 +927,7 @@ export default function ChatPage() {
 
     setContacts((prev) => {
       const existing = prev.find(
-        (c) => c.username.toLowerCase() === selectedUser.username.toLowerCase()
+        (c) => c.username.toLowerCase() === partnerUname
       );
       const updatedContact: UserContact = {
         ...(existing || selectedUser),
@@ -871,11 +935,12 @@ export default function ChatPage() {
         lastMessageTime: new Date().toISOString(),
       };
       const filtered = prev.filter(
-        (c) => c.username.toLowerCase() !== selectedUser.username.toLowerCase()
+        (c) => c.username.toLowerCase() !== partnerUname &&
+               c.username.toLowerCase() !== myUname
       );
       const nextContacts = [updatedContact, ...filtered];
       localStorage.setItem(
-        `usly_contacts_${currentUser.username}`,
+        `usly_contacts_${myUname}`,
         JSON.stringify(nextContacts)
       );
       return nextContacts;
@@ -902,10 +967,7 @@ export default function ChatPage() {
             const next = prev.map((m) =>
               m.id === optimistic.id ? { ...m, id: data.message.id } : m
             );
-            localStorage.setItem(
-              `usly_msgs_${currentUser.username}_${selectedUser.username}`,
-              JSON.stringify(next)
-            );
+            localStorage.setItem(cacheKey, JSON.stringify(next));
             return next;
           });
         }
@@ -932,6 +994,10 @@ export default function ChatPage() {
   // Add Emoji Reaction
   const handleAddReaction = async (messageId: string, emoji: string) => {
     if (!currentUser || !selectedUser) return;
+    const myUname = currentUser.username.toLowerCase();
+    const partnerUname = selectedUser.username.toLowerCase();
+    const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
+
     setMessages((prev) => {
       const updated = prev.map((msg) => {
         if (msg.id === messageId) {
@@ -950,10 +1016,7 @@ export default function ChatPage() {
         }
         return msg;
       });
-      localStorage.setItem(
-        `usly_msgs_${currentUser.username}_${selectedUser.username}`,
-        JSON.stringify(updated)
-      );
+      localStorage.setItem(cacheKey, JSON.stringify(updated));
       return updated;
     });
 
@@ -1060,7 +1123,7 @@ export default function ChatPage() {
       status: "online" as const,
     };
 
-    setSelectedUser(callerContact);
+    handleSelectContact(callerContact);
     setActiveCall({
       callId: incomingCall.callId,
       isCaller: false,
@@ -1276,20 +1339,24 @@ export default function ChatPage() {
                       <div className="text-[10px] font-bold text-usly-coral uppercase tracking-wider px-1">
                         Active Users ({searchResults.length})
                       </div>
-                      {searchResults.map((user) => (
+                      {searchResults
+                        .filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase())
+                        .map((user) => (
                         <div
                           key={user.username}
                           onClick={() => {
                             setContacts((prev) => {
-                              if (prev.some((c) => c.username === user.username)) return prev;
+                              if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
                               const next = [user, ...prev];
-                              localStorage.setItem(
-                                `usly_contacts_${currentUser.username}`,
-                                JSON.stringify(next)
-                              );
+                              if (currentUser) {
+                                localStorage.setItem(
+                                  `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                  JSON.stringify(next)
+                                );
+                              }
                               return next;
                             });
-                            setSelectedUser(user);
+                            handleSelectContact(user);
                           }}
                           className="flex items-center justify-between p-2.5 rounded-2xl bg-usly-surface/60 border border-white/5 hover:border-usly-pink/40 transition cursor-pointer"
                         >
@@ -1311,15 +1378,17 @@ export default function ChatPage() {
                             <button
                               onClick={() => {
                                 setContacts((prev) => {
-                                  if (prev.some((c) => c.username === user.username)) return prev;
+                                  if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
                                   const next = [user, ...prev];
-                                  localStorage.setItem(
-                                    `usly_contacts_${currentUser.username}`,
-                                    JSON.stringify(next)
-                                  );
+                                  if (currentUser) {
+                                    localStorage.setItem(
+                                      `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                      JSON.stringify(next)
+                                    );
+                                  }
                                   return next;
                                 });
-                                setSelectedUser(user);
+                                handleSelectContact(user);
                               }}
                               className="px-3 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md hover:opacity-95 active:scale-95 transition"
                             >
@@ -1342,22 +1411,14 @@ export default function ChatPage() {
                   )}
                 </div>
               ) : (
-                contacts.map((contact) => {
+                contacts
+                  .filter((c) => !currentUser || c.username.toLowerCase() !== currentUser.username.toLowerCase())
+                  .map((contact) => {
                   const isSelected = selectedUser?.username.toLowerCase() === contact.username.toLowerCase();
                   return (
                     <button
                       key={contact.username}
-                      onClick={() => {
-                      setSelectedUser(contact);
-                      // Clear unread count when opening chat
-                      setContacts((prev) =>
-                        prev.map((c) =>
-                          c.username.toLowerCase() === contact.username.toLowerCase()
-                            ? { ...c, unreadCount: 0 }
-                            : c
-                        )
-                      );
-                    }}
+                      onClick={() => handleSelectContact(contact)}
                       className={`w-full flex items-center space-x-3 p-3 rounded-2xl transition text-left ${
                         isSelected
                           ? "bg-usly-surface border border-usly-pink/40 shadow-md"
@@ -1415,13 +1476,13 @@ export default function ChatPage() {
             <CallHistoryList
               currentUsername={currentUser.username}
               onStartCall={(partner, type) => {
-                const targetContact: UserContact = contacts.find((c) => c.username === partner.username) || {
+                const targetContact: UserContact = contacts.find((c) => c.username.toLowerCase() === partner.username.toLowerCase()) || {
                   username: partner.username,
                   name: partner.name,
                   avatar: partner.avatar,
                   status: "online",
                 };
-                setSelectedUser(targetContact);
+                handleSelectContact(targetContact);
                 if (type === "video") {
                   handleStartVideoCall(targetContact);
                 } else {
@@ -1429,14 +1490,13 @@ export default function ChatPage() {
                 }
               }}
               onSelectChat={(partner) => {
-                const targetContact: UserContact = contacts.find((c) => c.username === partner.username) || {
+                const targetContact: UserContact = contacts.find((c) => c.username.toLowerCase() === partner.username.toLowerCase()) || {
                   username: partner.username,
                   name: partner.name,
                   avatar: partner.avatar,
                   status: "online",
                 };
-                setSelectedUser(targetContact);
-                setActiveTab("messages");
+                handleSelectContact(targetContact);
               }}
             />
           )}
@@ -1523,9 +1583,11 @@ export default function ChatPage() {
                     No users found matching "{searchQuery}"
                   </div>
                 ) : (
-                  searchResults.map((user) => {
+                  searchResults
+                    .filter((u) => !currentUser || u.username.toLowerCase() !== currentUser.username.toLowerCase())
+                    .map((user) => {
                     const hasSent = sentRequestUsernames.includes(user.username);
-                    const isAlreadyContact = contacts.some((c) => c.username === user.username);
+                    const isAlreadyContact = contacts.some((c) => c.username.toLowerCase() === user.username.toLowerCase());
 
                     return (
                       <div
@@ -1533,16 +1595,17 @@ export default function ChatPage() {
                         className="flex items-center justify-between p-2.5 rounded-2xl bg-usly-surface/60 border border-white/5 hover:border-usly-pink/30 transition cursor-pointer"
                         onClick={() => {
                           setContacts((prev) => {
-                            if (prev.some((c) => c.username === user.username)) return prev;
+                            if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
                             const next = [user, ...prev];
-                            localStorage.setItem(
-                              `usly_contacts_${currentUser.username}`,
-                              JSON.stringify(next)
-                            );
+                            if (currentUser) {
+                              localStorage.setItem(
+                                `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                JSON.stringify(next)
+                              );
+                            }
                             return next;
                           });
-                          setSelectedUser(user);
-                          setActiveTab("messages");
+                          handleSelectContact(user);
                         }}
                       >
                         <div className="flex items-center space-x-2.5 min-w-0">
@@ -1563,16 +1626,17 @@ export default function ChatPage() {
                           <button
                             onClick={() => {
                               setContacts((prev) => {
-                                if (prev.some((c) => c.username === user.username)) return prev;
+                                if (prev.some((c) => c.username.toLowerCase() === user.username.toLowerCase())) return prev;
                                 const next = [user, ...prev];
-                                localStorage.setItem(
-                                  `usly_contacts_${currentUser.username}`,
-                                  JSON.stringify(next)
-                                );
+                                if (currentUser) {
+                                  localStorage.setItem(
+                                    `usly_contacts_${currentUser.username.toLowerCase()}`,
+                                    JSON.stringify(next)
+                                  );
+                                }
                                 return next;
                               });
-                              setSelectedUser(user);
-                              setActiveTab("messages");
+                              handleSelectContact(user);
                             }}
                             className="px-3 py-1.5 rounded-xl bg-usly-surface hover:bg-usly-pink/20 border border-usly-pink/40 text-usly-coral text-xs font-bold transition flex-shrink-0"
                           >
@@ -1690,7 +1754,7 @@ export default function ChatPage() {
               {/* Messages Feed */}
               <div className="flex-1 flex flex-col overflow-hidden bg-radial-gradient min-h-0">
                 <MessageList
-                  key={`msglist_${selectedUser.username}`}
+                  key={`msglist_${selectedUser.username.toLowerCase()}`}
                   messages={messages}
                   currentUsername={currentUser.username}
                   partnerName={selectedUser.name}
@@ -1699,7 +1763,7 @@ export default function ChatPage() {
 
                 {/* Message Input with Audio Whisper, Emojis, Stickers */}
                 <MessageInput
-                  key={`msginput_${selectedUser.username}`}
+                  key={`msginput_${selectedUser.username.toLowerCase()}`}
                   onSendMessage={handleSendMessage}
                   onSendLovePing={handleSendLovePing}
                 />
@@ -1763,13 +1827,13 @@ export default function ChatPage() {
         notification={activeToast}
         onDismiss={() => setActiveToast(null)}
         onSelectUser={(user) => {
-          const matched = contacts.find((c) => c.username === user.username) || {
+          const matched = contacts.find((c) => c.username.toLowerCase() === user.username.toLowerCase()) || {
             username: user.username,
             name: user.name,
             avatar: user.avatar,
             status: "online" as const,
           };
-          setSelectedUser(matched);
+          handleSelectContact(matched);
         }}
       />
 
