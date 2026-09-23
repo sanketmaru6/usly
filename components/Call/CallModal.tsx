@@ -206,6 +206,7 @@ export default function CallModal({
               callId,
               answer: { type: "answer", sdp: ans.sdp },
             }),
+            keepalive: true,
           });
           if (isMountedRef.current) setStatus("connected");
         } catch (e) {

@@ -1110,26 +1110,23 @@ export default function ChatPage() {
     if (!currentUser || !partner) return;
     const callId = "call_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
-    // 🔔 Step 1: Send ringing signal INSTANTLY — receiver's phone rings NOW
-    try {
-      await fetch("/api/calls/signal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "initiate",
-          callId,
-          callerUsername: currentUser.username,
-          callerName: currentUser.name,
-          callerAvatar: currentUser.avatar,
-          receiverUsername: partner.username,
-          type: "video",
-        }),
-      });
-    } catch (e) {
-      console.error("Failed to initiate call signal:", e);
-    }
+    // 🔔 Step 1: Send ringing signal INSTANTLY with keepalive
+    fetch("/api/calls/signal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "initiate",
+        callId,
+        callerUsername: currentUser.username,
+        callerName: currentUser.name,
+        callerAvatar: currentUser.avatar,
+        receiverUsername: partner.username,
+        type: "video",
+      }),
+      keepalive: true,
+    }).catch((e) => console.error("Failed to initiate call signal:", e));
 
-    // Step 2: Mount the CallModal
+    // Step 2: Mount the CallModal immediately
     setActiveCall({
       callId,
       isCaller: true,
@@ -1146,6 +1143,21 @@ export default function ChatPage() {
     if (!currentUser || !partner) return;
     const callId = "call_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
 
+    fetch("/api/calls/signal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "initiate",
+        callId,
+        callerUsername: currentUser.username,
+        callerName: currentUser.name,
+        callerAvatar: currentUser.avatar,
+        receiverUsername: partner.username,
+        type: "audio",
+      }),
+      keepalive: true,
+    }).catch((e) => console.error("Failed to initiate audio call signal:", e));
+
     setActiveCall({
       callId,
       isCaller: true,
@@ -1154,24 +1166,6 @@ export default function ChatPage() {
       partnerUsername: partner.username,
       partnerAvatar: partner.avatar,
     });
-
-    try {
-      await fetch("/api/calls/signal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "initiate",
-          callId,
-          callerUsername: currentUser.username,
-          callerName: currentUser.name,
-          callerAvatar: currentUser.avatar,
-          receiverUsername: partner.username,
-          type: "audio",
-        }),
-      });
-    } catch (e) {
-      console.error("Failed to initiate audio call signal:", e);
-    }
   };
 
   // Answer incoming call

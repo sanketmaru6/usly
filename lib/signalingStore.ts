@@ -16,6 +16,7 @@ export interface LiveSignal {
   answer?: any;
   callerCandidates: any[];
   receiverCandidates: any[];
+  lastReaction?: { emoji: string; timestamp: number };
   updatedAt: number;
 }
 
@@ -206,10 +207,17 @@ export const signalingStore = {
       }
     }
 
+    const existingInMem = global.liveSignals.get(call.callId);
     const fullCall: LiveSignal = {
       ...call,
-      callerCandidates: [],
-      receiverCandidates: [],
+      offer: call.offer || existingInMem?.offer,
+      answer: call.answer || existingInMem?.answer,
+      callerCandidates: Array.isArray((call as any).callerCandidates) && (call as any).callerCandidates.length > 0
+        ? (call as any).callerCandidates
+        : (existingInMem?.callerCandidates || []),
+      receiverCandidates: Array.isArray((call as any).receiverCandidates) && (call as any).receiverCandidates.length > 0
+        ? (call as any).receiverCandidates
+        : (existingInMem?.receiverCandidates || []),
       updatedAt: Date.now(),
     };
     global.liveSignals.set(call.callId, fullCall);

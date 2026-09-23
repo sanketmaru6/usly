@@ -61,20 +61,25 @@ export async function POST(req: NextRequest) {
           await CallSession.findOneAndUpdate(
             { callId },
             {
-              callId,
-              callerId: callerId || `usr_${callerU}`,
-              callerName: callerName || callerU,
-              callerUsername: callerU,
-              callerAvatar: callerAvatar || "",
-              receiverId: receiverId || `usr_${receiverU}`,
-              receiverName: receiverU,
-              receiverUsername: receiverU,
-              type: type || "video",
-              status: "ringing",
-              offer,
-              callerCandidates: [],
-              receiverCandidates: [],
-              startedAt: new Date(),
+              $setOnInsert: {
+                callId,
+                callerId: callerId || `usr_${callerU}`,
+                callerName: callerName || callerU,
+                callerUsername: callerU,
+                callerAvatar: callerAvatar || "",
+                receiverId: receiverId || `usr_${receiverU}`,
+                receiverName: receiverU,
+                receiverUsername: receiverU,
+                type: type || "video",
+                status: "ringing",
+                callerCandidates: [],
+                receiverCandidates: [],
+                startedAt: new Date(),
+              },
+              $set: {
+                ...(offer ? { offer } : {}),
+                updatedAt: new Date(),
+              },
             },
             { upsert: true, new: true }
           );
@@ -86,26 +91,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, callId, call: newCallData });
     }
 
-    // 2. SET OR UPDATE OFFER (Sub-10ms response via memory + background DB sync)
+    // 2. SET OR UPDATE OFFER (Guaranteed MongoDB persistence + instant in-memory update)
     if (action === "set_offer") {
       const { callId, offer } = body;
       signalingStore.updateCall(callId, { offer });
 
-      connectToDatabase()
-        .then((dbRes) => {
-          if (dbRes.isConnected) {
-            CallSession.findOneAndUpdate(
-              { callId },
-              { offer, updatedAt: new Date() }
-            ).catch((e: any) => console.error("set_offer DB error:", e.message));
-          }
-        })
-        .catch(() => {});
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          await CallSession.findOneAndUpdate(
+            { callId },
+            { $set: { offer, updatedAt: new Date() } },
+            { upsert: true }
+          );
+        }
+      } catch (e: any) {
+        console.error("set_offer DB error:", e.message);
+      }
 
       return NextResponse.json({ success: true });
     }
 
-    // 3. ANSWER A CALL (Instant acceptance broadcast + background DB sync)
+    // 3. ANSWER A CALL (Guaranteed MongoDB persistence + instant in-memory broadcast)
     if (action === "answer") {
       const { callId, answer } = body;
       const updated = signalingStore.updateCall(callId, {
@@ -113,20 +120,24 @@ export async function POST(req: NextRequest) {
         answer,
       });
 
-      connectToDatabase()
-        .then((dbRes) => {
-          if (dbRes.isConnected) {
-            CallSession.findOneAndUpdate(
-              { callId },
-              {
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          await CallSession.findOneAndUpdate(
+            { callId },
+            {
+              $set: {
                 status: "accepted",
                 answer,
                 updatedAt: new Date(),
-              }
-            ).catch((err: any) => console.error("Answer call DB error:", err.message));
-          }
-        })
-        .catch(() => {});
+              },
+            },
+            { upsert: true }
+          );
+        }
+      } catch (err: any) {
+        console.error("Answer call DB error:", err.message);
+      }
 
       return NextResponse.json({ success: true, call: updated });
     }
@@ -220,45 +231,63 @@ export async function GET(req: NextRequest) {
 
   // 1. Specific Call Query
   if (callId) {
-    // Check in-memory store first for instant sub-millisecond response during calls
-    const memCall = signalingStore.getCall(callId);
-    if (memCall) {
-      return NextResponse.json({ call: memCall });
+    let callObj = signalingStore.getCall(callId);
+
+    // Sync with MongoDB if call not in memory, or if peer is waiting for offer/answer, or during active call
+    const needsSync =
+      !callObj ||
+      !callObj.offer ||
+      !callObj.answer ||
+      callObj.status === "ringing" ||
+      callObj.status === "accepted";
+
+    if (needsSync) {
+      try {
+        const dbRes = await connectToDatabase();
+        if (dbRes.isConnected) {
+          const dbCall = await CallSession.findOne({ callId });
+          if (dbCall) {
+            const mergedCall = {
+              callId: dbCall.callId,
+              callerId: dbCall.callerId,
+              callerName: dbCall.callerName,
+              callerUsername: dbCall.callerUsername,
+              callerAvatar: dbCall.callerAvatar,
+              receiverId: dbCall.receiverId,
+              receiverName: dbCall.receiverName,
+              receiverUsername: dbCall.receiverUsername,
+              receiverAvatar: dbCall.receiverAvatar,
+              type: dbCall.type,
+              status: dbCall.status,
+              durationSeconds: dbCall.durationSeconds,
+              offer: dbCall.offer || callObj?.offer,
+              answer: dbCall.answer || callObj?.answer,
+              callerCandidates: Array.from(new Set([
+                ...(callObj?.callerCandidates || []).map((c: any) => typeof c === "string" ? c : JSON.stringify(c)),
+                ...(dbCall.callerCandidates || []).map((c: any) => typeof c === "string" ? c : JSON.stringify(c)),
+              ])).map((s: string) => {
+                try { return JSON.parse(s); } catch { return s; }
+              }),
+              receiverCandidates: Array.from(new Set([
+                ...(callObj?.receiverCandidates || []).map((c: any) => typeof c === "string" ? c : JSON.stringify(c)),
+                ...(dbCall.receiverCandidates || []).map((c: any) => typeof c === "string" ? c : JSON.stringify(c)),
+              ])).map((s: string) => {
+                try { return JSON.parse(s); } catch { return s; }
+              }),
+              lastReaction: dbCall.lastReaction || callObj?.lastReaction,
+              updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
+            };
+            signalingStore.updateCall(callId, mergedCall);
+            callObj = mergedCall as any;
+          }
+        }
+      } catch (err: any) {
+        console.error("GET callId DB sync error:", err.message);
+      }
     }
 
-    // Check MongoDB fallback
-    try {
-      const dbRes = await connectToDatabase();
-      if (dbRes.isConnected) {
-        const dbCall = await CallSession.findOne({ callId });
-        if (dbCall) {
-          const callObj = {
-            callId: dbCall.callId,
-            callerId: dbCall.callerId,
-            callerName: dbCall.callerName,
-            callerUsername: dbCall.callerUsername,
-            callerAvatar: dbCall.callerAvatar,
-            receiverId: dbCall.receiverId,
-            receiverName: dbCall.receiverName,
-            receiverUsername: dbCall.receiverUsername,
-            receiverAvatar: dbCall.receiverAvatar,
-            type: dbCall.type,
-            status: dbCall.status,
-            durationSeconds: dbCall.durationSeconds,
-            offer: dbCall.offer,
-            answer: dbCall.answer,
-            callerCandidates: dbCall.callerCandidates || [],
-            receiverCandidates: dbCall.receiverCandidates || [],
-            lastReaction: dbCall.lastReaction,
-            updatedAt: dbCall.updatedAt ? new Date(dbCall.updatedAt).getTime() : Date.now(),
-          };
-          // Cache in memory for subsequent sub-millisecond polling queries
-          signalingStore.createCall(callObj as any);
-          return NextResponse.json({ call: callObj });
-        }
-      }
-    } catch (err: any) {
-      console.error("GET callId DB error:", err.message);
+    if (callObj) {
+      return NextResponse.json({ call: callObj });
     }
 
     return NextResponse.json({ error: "Call not found" }, { status: 404 });
