@@ -1,4 +1,10 @@
 import mongoose from "mongoose";
+import dns from "dns";
+
+// Ensure Atlas SRV records resolve reliably on Windows / Node.js
+try {
+  dns.setServers(["8.8.8.8", "1.1.1.1"]);
+} catch {}
 
 /**
  * Global is used here to maintain a cached connection across hot reloads
