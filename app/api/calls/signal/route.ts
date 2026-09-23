@@ -307,8 +307,9 @@ export async function GET(req: NextRequest) {
       const dbRes = await connectToDatabase();
       if (dbRes.isConnected) {
         const now = Date.now();
+        const safeRegex = new RegExp(`^${username.trim()}$`, "i");
         const activeDbCall = await CallSession.findOne({
-          $or: [{ receiverUsername: username }, { callerUsername: username }],
+          $or: [{ receiverUsername: safeRegex }, { callerUsername: safeRegex }],
           status: { $in: ["ringing", "accepted"] },
         }).sort({ updatedAt: -1 });
 

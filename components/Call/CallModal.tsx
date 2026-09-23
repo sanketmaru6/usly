@@ -72,10 +72,10 @@ export default function CallModal({
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [isInputFocused, setIsInputFocused] = useState(false);
 
-  const localVideoRef  = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement>(null);
-  const commentsEndRef = useRef<HTMLDivElement>(null);
+  const localVideoRef  = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const commentsEndRef = useRef<HTMLDivElement | null>(null);
 
   const pcRef           = useRef<RTCPeerConnection | null>(null);
   const localStreamRef  = useRef<MediaStream | null>(null);
@@ -117,25 +117,46 @@ export default function CallModal({
     }
   };
 
+  // Safe candidate format normalization ensuring sdpMLineIndex or sdpMid is never null
+  const normalizeIceCandidate = (cand: any): RTCIceCandidateInit | null => {
+    if (!cand) return null;
+    const raw = typeof cand === "string" ? { candidate: cand } : cand;
+    if (!raw || typeof raw.candidate !== "string" || !raw.candidate.trim()) return null;
+    const candidateStr = raw.candidate.trim();
+
+    const hasMLine = raw.sdpMLineIndex !== undefined && raw.sdpMLineIndex !== null;
+    const hasMid = raw.sdpMid !== undefined && raw.sdpMid !== null && raw.sdpMid !== "";
+
+    return {
+      candidate: candidateStr,
+      sdpMid: hasMid ? String(raw.sdpMid) : (hasMLine ? undefined : "0"),
+      sdpMLineIndex: hasMLine ? Number(raw.sdpMLineIndex) : (hasMid ? undefined : 0),
+      usernameFragment: raw.usernameFragment,
+    };
+  };
+
   // Safe candidate application with queuing and robust format normalization
   const applyCandidate = async (cand: any) => {
     const pc = pcRef.current;
     if (!cand || !pc) return;
-    const candObj = typeof cand === "string" ? { candidate: cand } : cand;
-    if (!candObj || !candObj.candidate) return;
-    const key = JSON.stringify(candObj);
+    const norm = normalizeIceCandidate(cand);
+    if (!norm) return;
+    const key = `${norm.candidate}_${norm.sdpMid}_${norm.sdpMLineIndex}`;
     if (addedCandidates.current.has(key)) return;
 
     if (pc.remoteDescription && pc.remoteDescription.type) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(candObj));
+        await pc.addIceCandidate(new RTCIceCandidate(norm));
         addedCandidates.current.add(key);
       } catch (err) {
         console.warn("[WebRTC] addIceCandidate error:", err);
       }
     } else {
-      if (!candidateQueue.current.some((c) => JSON.stringify(typeof c === "string" ? { candidate: c } : c) === key)) {
-        candidateQueue.current.push(candObj);
+      if (!candidateQueue.current.some((c) => {
+        const n = normalizeIceCandidate(c);
+        return n && `${n.candidate}_${n.sdpMid}_${n.sdpMLineIndex}` === key;
+      })) {
+        candidateQueue.current.push(norm);
       }
     }
   };
@@ -143,15 +164,15 @@ export default function CallModal({
   // Flush queued candidates once remote description is set
   const flushCandidates = async () => {
     const pc = pcRef.current;
-    if (!pc || !pc.remoteDescription) return;
+    if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) return;
     while (candidateQueue.current.length > 0) {
       const c = candidateQueue.current.shift()!;
-      const candObj = typeof c === "string" ? { candidate: c } : c;
-      if (!candObj || !candObj.candidate) continue;
-      const key = JSON.stringify(candObj);
+      const norm = normalizeIceCandidate(c);
+      if (!norm) continue;
+      const key = `${norm.candidate}_${norm.sdpMid}_${norm.sdpMLineIndex}`;
       if (!addedCandidates.current.has(key)) {
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(candObj));
+          await pc.addIceCandidate(new RTCIceCandidate(norm));
           addedCandidates.current.add(key);
         } catch (err) {
           console.warn("[WebRTC] flush candidate error:", err);
@@ -208,7 +229,6 @@ export default function CallModal({
           console.log("[WebRTC] Caller setting remote answer description");
           await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
           await flushCandidates();
-          optimizeCodecs(pc);
           applySenderBitrates(pc, callType === "video");
           if (isMountedRef.current) setStatus("connected");
         } catch (e) {
@@ -223,7 +243,6 @@ export default function CallModal({
         processedRef.current.offer = true;
         try {
           console.log("[WebRTC] Receiver setting remote offer description");
-          optimizeCodecs(pc);
           await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
           await flushCandidates();
           const ans = await pc.createAnswer();
@@ -370,6 +389,15 @@ export default function CallModal({
         if (pc.connectionState === "connected") {
           applySenderBitrates(pc, callType === "video");
           setStatus("connected");
+          if (callType === "video" && remoteStreamRef.current) {
+            if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+              remoteVideoRef.current.srcObject = remoteStreamRef.current;
+            }
+            remoteVideoRef.current?.play().catch(() => {});
+            if (remoteStreamRef.current.getVideoTracks().length > 0) {
+              setHasRemoteVideo(true);
+            }
+          }
         } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
           console.log("[WebRTC] Connection failed, attempting ICE restart...");
           triggerIceRestart();
@@ -382,6 +410,15 @@ export default function CallModal({
         if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
           applySenderBitrates(pc, callType === "video");
           setStatus("connected");
+          if (callType === "video" && remoteStreamRef.current) {
+            if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+              remoteVideoRef.current.srcObject = remoteStreamRef.current;
+            }
+            remoteVideoRef.current?.play().catch(() => {});
+            if (remoteStreamRef.current.getVideoTracks().length > 0) {
+              setHasRemoteVideo(true);
+            }
+          }
         } else if (pc.iceConnectionState === "failed") {
           triggerIceRestart();
         }
@@ -408,7 +445,6 @@ export default function CallModal({
       // 6. If Caller: create offer and send to signaling server
       if (isCaller) {
         try {
-          optimizeCodecs(pc);
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: callType === "video",
@@ -736,7 +772,13 @@ export default function CallModal({
       <div className="absolute inset-0">
         {callType === "video" && (
           <video
-            ref={remoteVideoRef}
+            ref={(el) => {
+              remoteVideoRef.current = el;
+              if (el && remoteStreamRef.current && el.srcObject !== remoteStreamRef.current) {
+                el.srcObject = remoteStreamRef.current;
+                el.play().catch(() => {});
+              }
+            }}
             autoPlay
             playsInline
             muted
@@ -821,7 +863,13 @@ export default function CallModal({
           }}
         >
           <video
-            ref={localVideoRef}
+            ref={(el) => {
+              localVideoRef.current = el;
+              if (el && localStreamRef.current && el.srcObject !== localStreamRef.current) {
+                el.srcObject = localStreamRef.current;
+                el.play().catch(() => {});
+              }
+            }}
             autoPlay
             playsInline
             muted

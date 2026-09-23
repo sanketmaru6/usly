@@ -1,7 +1,7 @@
 // High-Definition, Low-Latency WebRTC Configuration & Performance Optimizer
 import { EventEmitter } from "events";
 
-// Complete High-Speed ICE Configuration with Google STUN + Cloudflare STUN + OpenRelay TURN
+// Complete High-Speed ICE Configuration with Google STUN + Cloudflare STUN + Standard Relay TURN
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     // High-speed Google STUN servers
@@ -12,19 +12,19 @@ export const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun4.l.google.com:19302" },
     // Cloudflare STUN server
     { urls: "stun:stun.cloudflare.com:3478" },
-    // OpenRelay Global TURN Servers (Relays calls across mobile data, Symmetric NAT, and strict firewalls)
+    // Standard Relay Global TURN Servers (Relays calls across mobile 4G/5G, Symmetric NAT, and strict firewalls)
     {
       urls: [
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
-        "turns:openrelay.metered.ca:443?transport=tcp",
+        "turn:standard.relay.metered.ca:80",
+        "turn:standard.relay.metered.ca:443",
+        "turn:standard.relay.metered.ca:443?transport=tcp",
+        "turns:standard.relay.metered.ca:443?transport=tcp",
       ],
       username: "openrelay",
       credential: "openrelay",
     },
   ],
-  iceCandidatePoolSize: 10,
+  iceCandidatePoolSize: 2,
   bundlePolicy: "max-bundle",
   rtcpMuxPolicy: "require",
   iceTransportPolicy: "all",
@@ -92,12 +92,12 @@ export async function getUserMediaStream(
     }
   }
 
-  // 1. Crisp HD 720p capped at 30fps for instantaneous camera capture (<150ms) and zero encoder lag
+  // 1. Crisp HD camera: ideal 1280x720 (or 720x1280 portrait on mobile) capped at 30fps
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 1280, max: 1280 },
-        height: { ideal: 720, max: 720 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
         frameRate: { ideal: 30, max: 30 },
         facingMode: { ideal: facingMode },
       },
@@ -108,12 +108,12 @@ export async function getUserMediaStream(
     console.warn("HD camera tier failed, trying standard video:", e1?.message);
   }
 
-  // 2. Standard 480p camera with facing mode (ultra-responsive on low-end devices)
+  // 2. Standard camera tier (ultra-responsive on low-end devices)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 640, max: 854 },
-        height: { ideal: 480, max: 480 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
         frameRate: { ideal: 30, max: 30 },
         facingMode: { ideal: facingMode },
       },
