@@ -354,16 +354,21 @@ export const signalingStore = {
           const partnerUser = global.liveUsers.get(partnerUname);
           const partnerName =
             partnerUser?.name ||
-            (sender === uname ? partnerUname : msg.senderName) ||
-            partnerUname;
+            (sender !== uname ? msg.senderName : null) ||
+            partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1);
           const partnerAvatar =
             partnerUser?.avatar ||
+            (sender !== uname ? (msg as any).senderAvatar : null) ||
             `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`;
 
           let preview = msg.content;
           if (msg.type === "love_ping") preview = "💖 Sent a Love Ping!";
           else if (msg.type === "voice") preview = `🎤 Voice note (${msg.audioDuration || 3}s)`;
           else if (msg.type === "sticker") preview = "✨ Sticker";
+
+          if (sender === uname) {
+            preview = `You: ${preview}`;
+          }
 
           conversationsMap.set(partnerUname, {
             username: partnerUname,
@@ -389,10 +394,13 @@ export const signalingStore = {
           const partnerUname = sender === uname ? receiver : sender;
           if (partnerUname && !conversationsMap.has(partnerUname)) {
             const partnerUser = global.liveUsers.get(partnerUname);
-            const partnerName = partnerUser?.name || req.senderName || partnerUname;
+            const partnerName =
+              partnerUser?.name ||
+              (sender !== uname ? req.senderName : null) ||
+              partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1);
             const partnerAvatar =
               partnerUser?.avatar ||
-              req.senderAvatar ||
+              (sender !== uname ? req.senderAvatar : null) ||
               `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`;
 
             conversationsMap.set(partnerUname, {
@@ -410,7 +418,10 @@ export const signalingStore = {
       }
     }
 
-    return Array.from(conversationsMap.values());
+    // Sort conversations so the latest active conversation appears at the top
+    return Array.from(conversationsMap.values()).sort(
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+    );
   },
 
   addReaction(messageId: string, user: string, emoji: string) {

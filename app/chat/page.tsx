@@ -227,7 +227,7 @@ export default function ChatPage() {
     fetch(`/api/conversations?username=${storedUsername}`)
       .then((r) => r.json())
       .then((data) => {
-        if (data.conversations && Array.isArray(data.conversations) && data.conversations.length > 0) {
+        if (data.conversations && Array.isArray(data.conversations)) {
           setContacts(data.conversations);
           localStorage.setItem(
             `usly_contacts_${storedUsername}`,
@@ -440,6 +440,55 @@ export default function ChatPage() {
                 (curSelected && curSelected.username.toLowerCase() === senderUname) ||
                 isInCallWithSender;
 
+              let preview = msg.content || "";
+              if (msg.type === "love_ping") {
+                const ping = getPingOptionFromContent(msg.content);
+                preview = `${ping.icon} Sent a ${ping.title} Ping!`;
+              } else if (msg.type === "image") preview = "📷 Photo";
+              else if (msg.type === "voice") preview = `🎤 Voice note (${msg.audioDuration || 3}s)`;
+              else if (msg.type === "sticker") preview = "✨ Sticker";
+
+              const senderAvatar =
+                msg.senderAvatar ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${senderUname}`;
+              const senderName = msg.senderName || senderUname;
+
+              // Immediately update contact list preview and sort to top
+              setContacts((prev) => {
+                const existingIdx = prev.findIndex(
+                  (c) => c.username.toLowerCase() === senderUname
+                );
+                let updatedContact: UserContact;
+                if (existingIdx >= 0) {
+                  const existing = prev[existingIdx];
+                  updatedContact = {
+                    ...existing,
+                    lastMessage: preview,
+                    lastMessageTime: msg.createdAt || new Date().toISOString(),
+                    unreadCount: isCurrentChatOpen ? 0 : (existing.unreadCount || 0) + 1,
+                  };
+                } else {
+                  updatedContact = {
+                    username: senderUname,
+                    name: senderName,
+                    avatar: senderAvatar,
+                    status: "online",
+                    lastMessage: preview,
+                    lastMessageTime: msg.createdAt || new Date().toISOString(),
+                    unreadCount: isCurrentChatOpen ? 0 : 1,
+                  };
+                }
+                const filtered = prev.filter(
+                  (c) => c.username.toLowerCase() !== senderUname
+                );
+                const nextContacts = [updatedContact, ...filtered];
+                localStorage.setItem(
+                  `usly_contacts_${currentUser.username}`,
+                  JSON.stringify(nextContacts)
+                );
+                return nextContacts;
+              });
+
               if (isCurrentChatOpen) {
                 if (!isInCallWithSender) {
                   soundFX.playChatSound();
@@ -455,37 +504,30 @@ export default function ChatPage() {
                   }
                 }
               } else {
-                // Increment unread count for this sender
-                setContacts((prev) =>
-                  prev.map((c) =>
-                    c.username.toLowerCase() === senderUname
-                      ? { ...c, unreadCount: (c.unreadCount || 0) + 1 }
-                      : c
-                  )
-                );
-
                 // Trigger system notification, chime, and top toast
-                const senderAvatar =
-                  msg.senderAvatar ||
-                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${senderUname}`;
                 notificationService.notifyMessage(
-                  msg.senderName || senderUname,
+                  senderName,
                   senderUname,
                   senderAvatar,
                   msg.content,
                   msg.type,
                   () => {
-                    const targetUser = contactsRef.current.find((c) => c.username.toLowerCase() === senderUname) || {
-                      username: senderUname,
-                      name: msg.senderName || senderUname,
-                      avatar: senderAvatar,
-                      status: "online" as const,
-                    };
+                    const targetUser =
+                      contactsRef.current.find(
+                        (c) => c.username.toLowerCase() === senderUname
+                      ) || {
+                        username: senderUname,
+                        name: senderName,
+                        avatar: senderAvatar,
+                        status: "online" as const,
+                      };
                     setSelectedUser(targetUser);
                     // Clear unread on open
                     setContacts((prev) =>
                       prev.map((c) =>
-                        c.username.toLowerCase() === senderUname ? { ...c, unreadCount: 0 } : c
+                        c.username.toLowerCase() === senderUname
+                          ? { ...c, unreadCount: 0 }
+                          : c
                       )
                     );
                   }
@@ -493,7 +535,7 @@ export default function ChatPage() {
 
                 setActiveToast({
                   id: msg.id || String(Date.now()),
-                  senderName: msg.senderName || senderUname,
+                  senderName: senderName,
                   senderUsername: senderUname,
                   senderAvatar: senderAvatar,
                   content: msg.content,
@@ -658,7 +700,7 @@ export default function ChatPage() {
 
     // Add to local contacts immediately
     setContacts((prev) => {
-      if (prev.some((c) => c.username === targetUser.username)) return prev;
+      if (prev.some((c) => c.username.toLowerCase() === targetUser.username.toLowerCase())) return prev;
       return [targetUser, ...prev];
     });
 
@@ -701,7 +743,7 @@ export default function ChatPage() {
         mood: "Just connected! 🎉",
         lastMessage: "Connected! Click to chat ✨",
       };
-      setContacts((prev) => [newContact, ...prev.filter((c) => c.username !== req.senderUsername)]);
+      setContacts((prev) => [newContact, ...prev.filter((c) => c.username.toLowerCase() !== req.senderUsername.toLowerCase())]);
       setSelectedUser(newContact);
       setActiveTab("messages");
       soundFX.playLovePing();
@@ -770,10 +812,15 @@ export default function ChatPage() {
     else if (type === "voice") preview = `🎤 Voice note (${audioDuration || 3}s)`;
     else if (type === "sticker") preview = "✨ Sticker";
 
+    const displayPreview = `You: ${preview}`;
+
     setContacts((prev) => {
+      const existing = prev.find(
+        (c) => c.username.toLowerCase() === selectedUser.username.toLowerCase()
+      );
       const updatedContact: UserContact = {
-        ...selectedUser,
-        lastMessage: preview,
+        ...(existing || selectedUser),
+        lastMessage: displayPreview,
         lastMessageTime: new Date().toISOString(),
       };
       const filtered = prev.filter(
@@ -1258,7 +1305,9 @@ export default function ChatPage() {
                       // Clear unread count when opening chat
                       setContacts((prev) =>
                         prev.map((c) =>
-                          c.username === contact.username ? { ...c, unreadCount: 0 } : c
+                          c.username.toLowerCase() === contact.username.toLowerCase()
+                            ? { ...c, unreadCount: 0 }
+                            : c
                         )
                       );
                     }}

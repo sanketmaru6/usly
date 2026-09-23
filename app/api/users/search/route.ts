@@ -5,14 +5,12 @@ import { signalingStore } from "@/lib/signalingStore";
 
 export const dynamic = "force-dynamic";
 
-const DUMMY_USERNAMES = ["sweetheart", "alexa", "priya", "rahul"];
-
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") || "").trim().toLowerCase();
   const currentUsername = (searchParams.get("currentUsername") || "").trim().toLowerCase();
 
-  const excluded = [currentUsername, ...DUMMY_USERNAMES].filter(Boolean);
+  const excluded = [currentUsername].filter(Boolean);
 
   const dbRes = await connectToDatabase();
   let dbUsers: any[] = [];

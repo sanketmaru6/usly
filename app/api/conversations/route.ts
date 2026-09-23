@@ -55,10 +55,14 @@ export async function GET(req: NextRequest) {
             preview = "✨ Sticker";
           }
 
+          if (s === username) {
+            preview = `You: ${preview}`;
+          }
+
           conversationsMap.set(partnerUname, {
             username: partnerUname,
-            name: m.senderName || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
-            avatar: m.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
+            name: (s !== username ? m.senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
+            avatar: (s !== username ? m.senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
             lastMessage: preview,
             lastMessageType: m.type || "text",
             lastMessageTime: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
@@ -82,8 +86,8 @@ export async function GET(req: NextRequest) {
         if (partnerUname && partnerUname !== username && !conversationsMap.has(partnerUname)) {
           conversationsMap.set(partnerUname, {
             username: partnerUname,
-            name: reqItem.senderName || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
-            avatar: reqItem.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
+            name: (s !== username ? reqItem.senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
+            avatar: (s !== username ? reqItem.senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
             lastMessage: "Connected! Click to chat ✨",
             lastMessageType: "text",
             lastMessageTime: reqItem.createdAt ? new Date(reqItem.createdAt).toISOString() : new Date().toISOString(),
@@ -111,5 +115,20 @@ export async function GET(req: NextRequest) {
     console.error("Conversations GET DB error:", err.message);
   }
 
-  return NextResponse.json({ conversations: Array.from(conversationsMap.values()) });
+  // Also enrich from in-memory presence if available
+  for (const [pUname, conv] of conversationsMap.entries()) {
+    const liveU = signalingStore.getUser(pUname);
+    if (liveU) {
+      conv.name = liveU.name || conv.name;
+      conv.avatar = liveU.avatar || conv.avatar;
+      conv.status = liveU.status || conv.status;
+    }
+  }
+
+  // Sort conversations so the latest active conversation appears at the top
+  const sortedConversations = Array.from(conversationsMap.values()).sort(
+    (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+  );
+
+  return NextResponse.json({ conversations: sortedConversations });
 }
