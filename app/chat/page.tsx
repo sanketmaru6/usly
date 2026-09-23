@@ -177,13 +177,15 @@ export default function ChatPage() {
   };
 
   // Unified contact selection: synchronously sets selectedUser, switches tab,
+  // Unified contact selection: synchronously sets selectedUser, switches tab,
   // clears unread count, and loads cached messages immediately with zero flash of previous messages
   const handleSelectContact = (contact: UserContact) => {
     if (!contact) return;
     const partnerUname = contact.username.toLowerCase();
     const myUname = (currentUserRef.current?.username || "").toLowerCase();
 
-    // 1. Immediately update selected contact & ensure messages tab
+    // 1. Immediately update selected contact & ensure messages tab synchronously
+    selectedUserRef.current = contact;
     setSelectedUser(contact);
     setActiveTab("messages");
 
@@ -380,16 +382,22 @@ export default function ChatPage() {
     localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
     const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
 
-    // Fast check: if messages are empty, try loading from cache
+    // Always load this selected user's cached messages (or empty if none)
     try {
       const cachedMsgsStr = localStorage.getItem(cacheKey);
       if (cachedMsgsStr) {
         const cachedMsgs = JSON.parse(cachedMsgsStr);
-        if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
-          setMessages((prev) => (prev.length === 0 ? cachedMsgs : prev));
+        if (Array.isArray(cachedMsgs)) {
+          setMessages(cachedMsgs);
+        } else {
+          setMessages([]);
         }
+      } else {
+        setMessages([]);
       }
-    } catch {}
+    } catch {
+      setMessages([]);
+    }
 
     // Fetch latest messages from API with race condition protection
     fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
@@ -411,16 +419,20 @@ export default function ChatPage() {
 
   // 2b. Intercept mobile hardware back button — go to chat list, NOT login page
   useEffect(() => {
-    if (selectedUser) {
+    if (selectedUser && window.history.state?.chatOpen !== true) {
       // Push a "fake" state so the back button has something to pop
       window.history.pushState({ chatOpen: true }, "", window.location.href);
     }
 
     const handlePopState = (e: PopStateEvent) => {
-      if (selectedUser) {
+      if (selectedUserRef.current) {
         // Back button pressed while chat is open → close chat, stay on page
         e.preventDefault();
+        selectedUserRef.current = null;
         setSelectedUser(null);
+        if (currentUserRef.current) {
+          localStorage.removeItem(`usly_active_partner_${currentUserRef.current.username.toLowerCase()}`);
+        }
       }
     };
 
@@ -1687,9 +1699,10 @@ export default function ChatPage() {
                   {/* Back / Close Chat Button */}
                   <button
                     onClick={() => {
+                      selectedUserRef.current = null;
                       setSelectedUser(null);
                       if (currentUser) {
-                        localStorage.removeItem(`usly_active_partner_${currentUser.username}`);
+                        localStorage.removeItem(`usly_active_partner_${currentUser.username.toLowerCase()}`);
                       }
                     }}
                     className="p-2 -ml-1 rounded-xl bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
