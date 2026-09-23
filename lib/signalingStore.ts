@@ -430,5 +430,12 @@ export const signalingStore = {
     }
     return null;
   },
+
+  clearAll() {
+    global.liveUsers.clear();
+    global.liveMessages = [];
+    global.liveRequests = [];
+    global.liveSignals.clear();
+  },
 };
 

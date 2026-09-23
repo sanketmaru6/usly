@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:wipe": "node scripts/wipe-db.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
