@@ -26,6 +26,12 @@ export async function GET(req: NextRequest) {
       sendEvent("ping", { time: Date.now() });
 
       if (username) {
+        signalingStore.registerUser({
+          username,
+          name: username.charAt(0).toUpperCase() + username.slice(1),
+          status: "online",
+        });
+
         const active = signalingStore.findActiveCallForUser(username);
         if (active) {
           sendEvent("call", { type: "active_call", call: active });
