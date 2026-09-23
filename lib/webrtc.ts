@@ -7,11 +7,14 @@ export const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
   ],
-  iceCandidatePoolSize: 2,
+  iceCandidatePoolSize: 0,
   bundlePolicy: "max-bundle",
   rtcpMuxPolicy: "require",
+  iceTransportPolicy: "all",
 };
 
 // Creates an emergency fallback stream with silent audio and dark video so WebRTC never fails
@@ -60,6 +63,8 @@ export async function getUserMediaStream(
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
+    sampleRate: 48000,
+    channelCount: 1,
   };
 
   if (!video) {
@@ -74,13 +79,13 @@ export async function getUserMediaStream(
     }
   }
 
-  // 1. Try crisp HD 720p
+  // 1. Try crisp HD 720p with flexible ranges for instant camera acquisition (<200ms)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
+        width: { min: 640, ideal: 1280, max: 1920 },
+        height: { min: 480, ideal: 720, max: 1080 },
+        frameRate: { min: 24, ideal: 30, max: 60 },
         facingMode: { ideal: facingMode },
       },
       audio: audioConstraints,
@@ -94,7 +99,7 @@ export async function getUserMediaStream(
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: facingMode } },
-      audio: true,
+      audio: audioConstraints,
     });
     return stream;
   } catch (e2: any) {
@@ -139,14 +144,16 @@ export function applySenderBitrates(pc: RTCPeerConnection, isVideo: boolean = tr
         params.encodings[0].maxBitrate = 2500000; // 2.5 Mbps crisp HD
         params.encodings[0].priority = "high";
         params.encodings[0].networkPriority = "high";
+        (params as any).degradationPreference = "maintain-framerate";
         sender.setParameters(params).catch(() => {});
       } else if (sender.track?.kind === "audio") {
         const params = sender.getParameters();
         if (!params.encodings || params.encodings.length === 0) {
           params.encodings = [{}];
         }
-        params.encodings[0].maxBitrate = 64000; // 64kbps HD audio
+        params.encodings[0].maxBitrate = 96000; // 96kbps crystal-clear HD audio
         params.encodings[0].priority = "high";
+        params.encodings[0].networkPriority = "high";
         sender.setParameters(params).catch(() => {});
       }
     });

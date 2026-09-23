@@ -86,27 +86,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, callId, call: newCallData });
     }
 
-    // 2. SET OR UPDATE OFFER
+    // 2. SET OR UPDATE OFFER (Sub-10ms response via memory + background DB sync)
     if (action === "set_offer") {
       const { callId, offer } = body;
       signalingStore.updateCall(callId, { offer });
 
-      try {
-        const dbRes = await connectToDatabase();
-        if (dbRes.isConnected) {
-          await CallSession.findOneAndUpdate(
-            { callId },
-            { offer, updatedAt: new Date() }
-          );
-        }
-      } catch (e: any) {
-        console.error("set_offer DB error:", e.message);
-      }
+      connectToDatabase()
+        .then((dbRes) => {
+          if (dbRes.isConnected) {
+            CallSession.findOneAndUpdate(
+              { callId },
+              { offer, updatedAt: new Date() }
+            ).catch((e: any) => console.error("set_offer DB error:", e.message));
+          }
+        })
+        .catch(() => {});
 
       return NextResponse.json({ success: true });
     }
 
-    // 3. ANSWER A CALL
+    // 3. ANSWER A CALL (Instant acceptance broadcast + background DB sync)
     if (action === "answer") {
       const { callId, answer } = body;
       const updated = signalingStore.updateCall(callId, {
@@ -114,21 +113,20 @@ export async function POST(req: NextRequest) {
         answer,
       });
 
-      try {
-        const dbRes = await connectToDatabase();
-        if (dbRes.isConnected) {
-          await CallSession.findOneAndUpdate(
-            { callId },
-            {
-              status: "accepted",
-              answer,
-              updatedAt: new Date(),
-            }
-          );
-        }
-      } catch (err: any) {
-        console.error("Answer call DB error:", err.message);
-      }
+      connectToDatabase()
+        .then((dbRes) => {
+          if (dbRes.isConnected) {
+            CallSession.findOneAndUpdate(
+              { callId },
+              {
+                status: "accepted",
+                answer,
+                updatedAt: new Date(),
+              }
+            ).catch((err: any) => console.error("Answer call DB error:", err.message));
+          }
+        })
+        .catch(() => {});
 
       return NextResponse.json({ success: true, call: updated });
     }

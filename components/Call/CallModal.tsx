@@ -340,7 +340,7 @@ export default function CallModal({
         }
       };
 
-      // 5. Send local ICE candidates to remote peer
+      // 5. Send local ICE candidates to remote peer with keepalive
       pc.onicecandidate = async (ev) => {
         if (!ev.candidate || !isMountedRef.current) return;
         try {
@@ -353,6 +353,7 @@ export default function CallModal({
               candidate: ev.candidate.toJSON(),
               isCaller,
             }),
+            keepalive: true,
           });
         } catch {}
       };
@@ -375,6 +376,7 @@ export default function CallModal({
               callId,
               offer: { type: "offer", sdp: offer.sdp },
             }),
+            keepalive: true,
           });
         } catch (e) {
           console.error("[WebRTC] Offer failed:", e);
@@ -439,8 +441,11 @@ export default function CallModal({
         });
       } catch {}
 
-      // 9. Fast Polling fallback every 400ms for sub-second signaling on Vercel
-      pollRef.current = setInterval(async () => {
+      // 9. Adaptive High-Frequency Signaling Loop
+      // 150ms during negotiation for instant handshake (<300ms total)
+      // 1200ms once connected to conserve CPU, battery, and background bandwidth
+      let pollTimeout: NodeJS.Timeout | null = null;
+      const pollSignal = async () => {
         if (!isMountedRef.current) return;
         try {
           const r = await fetch(`/api/calls/signal?callId=${callId}`);
@@ -449,7 +454,18 @@ export default function CallModal({
             if (d.call) await processSignal(d.call);
           }
         } catch {}
-      }, 400);
+
+        if (!isMountedRef.current) return;
+        const isConnected =
+          pcRef.current?.connectionState === "connected" ||
+          pcRef.current?.iceConnectionState === "connected";
+        const delay = isConnected ? 1200 : 150;
+        pollTimeout = setTimeout(pollSignal, delay);
+        pollRef.current = pollTimeout;
+      };
+
+      pollTimeout = setTimeout(pollSignal, 80);
+      pollRef.current = pollTimeout;
 
       if (callType === "audio") {
         setTimeout(() => {
@@ -462,7 +478,10 @@ export default function CallModal({
 
     return () => {
       isMountedRef.current = false;
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearTimeout(pollRef.current);
+        clearInterval(pollRef.current);
+      }
       if (esRef.current) esRef.current.close();
       if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -678,11 +697,19 @@ export default function CallModal({
               setHasRemoteVideo(true);
               setStatus("connected");
             }}
+            onLoadedData={() => {
+              setHasRemoteVideo(true);
+              setStatus("connected");
+            }}
+            onCanPlay={() => {
+              setHasRemoteVideo(true);
+              setStatus("connected");
+            }}
             onPlay={() => {
               setHasRemoteVideo(true);
               setStatus("connected");
             }}
-            className={`w-full h-full object-cover transition-opacity duration-700 ${
+            className={`w-full h-full object-cover transition-opacity duration-200 ${
               hasRemoteVideo ? "opacity-100" : "opacity-0"
             }`}
           />

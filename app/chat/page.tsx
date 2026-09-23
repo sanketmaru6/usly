@@ -779,7 +779,7 @@ export default function ChatPage() {
     };
 
     poll();
-    const interval = setInterval(poll, 2000);
+    const interval = setInterval(poll, 1000);
     return () => {
       isMounted = false;
       if (eventSource) eventSource.close();
