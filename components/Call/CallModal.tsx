@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff,
   Heart, SwitchCamera, Volume2, VolumeX,
-  MessageCircle, Send,
+  MessageCircle, Send, Lock, Maximize2, Minimize2, Sparkles,
 } from "lucide-react";
 import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates } from "@/lib/webrtc";
 import { notificationService } from "@/lib/notifications";
@@ -69,6 +69,11 @@ export default function CallModal({
   const [inCallText, setInCallText]             = useState("");
   const [unreadChatCount, setUnreadChatCount]   = useState(0);
   const [isInputFocused, setIsInputFocused]     = useState(false);
+  const [isFitMode, setIsFitMode]               = useState(false);
+  const [isSwapped, setIsSwapped]               = useState(false);
+  const [pipCorner, setPipCorner]               = useState<"top-right" | "top-left" | "bottom-right" | "bottom-left">("top-right");
+  const [floatingReactions, setFloatingReactions] = useState<{ id: string; emoji: string; left: number }[]>([]);
+  const lastTapRef                              = useRef<number>(0);
 
   // DOM refs
   const localVideoRef  = useRef<HTMLVideoElement | null>(null);
@@ -656,6 +661,7 @@ export default function CallModal({
     onTriggerFloatingHeart?.();
     soundFX.playLovePing();
     setHeartBurst(true);
+    triggerFloatingEmoji("💖");
     setTimeout(() => setHeartBurst(false), 2000);
     try {
       await fetch("/api/calls/signal", {
@@ -664,6 +670,36 @@ export default function CallModal({
         body: JSON.stringify({ action: "reaction", callId, emoji: "💖" }),
       });
     } catch {}
+  };
+
+  const triggerFloatingEmoji = (emoji: string) => {
+    const id = "react_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6);
+    const left = 65 + Math.random() * 25; // 65% to 90% from left
+    setFloatingReactions((prev) => [...prev.slice(-15), { id, emoji, left }]);
+    setTimeout(() => {
+      setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
+    }, 2200);
+  };
+
+  const handleScreenClick = (e: React.MouseEvent) => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 320) {
+      // Double click/tap anywhere on screen sends romantic heart!
+      sendHeart();
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
+      revealUI();
+    }
+  };
+
+  const cyclePipCorner = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const corners: Array<"top-right" | "top-left" | "bottom-right" | "bottom-left"> = [
+      "top-right", "bottom-right", "bottom-left", "top-left"
+    ];
+    const currentIndex = corners.indexOf(pipCorner);
+    setPipCorner(corners[(currentIndex + 1) % corners.length]);
   };
 
   const endCall = () => {
@@ -682,126 +718,226 @@ export default function CallModal({
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
   const avatar = partnerAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUsername}`;
 
+  // Compute PiP placement styles
+  const pipStyles: Record<string, string> = {
+    "top-right": "top-16 right-4 sm:top-20 sm:right-6",
+    "top-left": "top-16 left-4 sm:top-20 sm:left-6",
+    "bottom-right": "bottom-36 right-4 sm:bottom-40 sm:right-6",
+    "bottom-left": "bottom-36 left-4 sm:bottom-40 left-6",
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       className="fixed inset-0 z-[8000] bg-black flex flex-col select-none overflow-hidden"
       style={{ height: "100dvh" }}
-      onClick={revealUI}
+      onClick={handleScreenClick}
     >
       {/* Hidden audio element – plays remote audio on all call types */}
       <audio ref={remoteAudioRef} autoPlay playsInline />
 
-      {/* ── Full-screen remote video ───────────────────────────────────────── */}
-      <div className="absolute inset-0">
+      {/* ── Full-screen Main Video ───────────────────────────────────────── */}
+      <div className="absolute inset-0 overflow-hidden bg-zinc-950 flex items-center justify-center">
         {callType === "video" && (
-          <video
-            ref={(el) => {
-              remoteVideoRef.current = el;
-              // Auto-attach if stream already arrived before DOM mounted
-              if (el && remoteStreamRef.current && el.srcObject !== remoteStreamRef.current) {
-                el.srcObject = remoteStreamRef.current;
-                el.play().catch(() => { if (el) { el.muted = true; el.play().catch(() => {}); } });
-              }
-            }}
-            autoPlay
-            playsInline
-            muted
-            onLoadedMetadata={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
-            onCanPlay={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
-            onPlay={() => { setHasRemoteVideo(true); setStatus("connected"); }}
-            className={`w-full h-full object-cover transition-opacity duration-300 ${hasRemoteVideo ? "opacity-100" : "opacity-0"}`}
-          />
+          <>
+            {/* Blurred ambient background when in fit mode */}
+            {isFitMode && hasRemoteVideo && (
+              <div
+                className="absolute inset-0 opacity-40 blur-2xl scale-110 pointer-events-none"
+                style={{
+                  backgroundImage: `url(${avatar})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }}
+              />
+            )}
+
+            {/* Main Video element */}
+            <video
+              ref={(el) => {
+                const target = isSwapped ? localVideoRef : remoteVideoRef;
+                target.current = el;
+                const stream = isSwapped ? localStreamRef.current : remoteStreamRef.current;
+                if (el && stream && el.srcObject !== stream) {
+                  el.srcObject = stream;
+                  el.play().catch(() => { if (el) { el.muted = true; el.play().catch(() => {}); } });
+                }
+              }}
+              autoPlay
+              playsInline
+              muted={isSwapped}
+              onLoadedMetadata={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
+              onCanPlay={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
+              onPlay={() => { setHasRemoteVideo(true); setStatus("connected"); }}
+              className={`w-full h-full transition-all duration-300 ${
+                isFitMode ? "object-contain" : "object-cover"
+              } ${isSwapped ? "scale-x-[-1]" : ""} ${hasRemoteVideo || isSwapped ? "opacity-100" : "opacity-0"}`}
+            />
+          </>
         )}
 
         {/* Connecting / audio overlay */}
-        {(!hasRemoteVideo || callType === "audio") && (
+        {(!hasRemoteVideo || callType === "audio") && !isSwapped && (
           <div className="absolute inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-center">
             <div className="relative flex items-center justify-center mb-8">
               {status !== "error" && (
                 <>
-                  <div className="absolute w-48 h-48 rounded-full bg-white/5 animate-ping" style={{ animationDuration: "2.5s" }} />
-                  <div className="absolute w-36 h-36 rounded-full bg-white/5 animate-ping" style={{ animationDuration: "2.5s", animationDelay: "0.7s" }} />
+                  <div className="absolute w-48 h-48 rounded-full bg-usly-pink/15 animate-ping" style={{ animationDuration: "2.5s" }} />
+                  <div className="absolute w-36 h-36 rounded-full bg-usly-pink/25 animate-ping" style={{ animationDuration: "2.5s", animationDelay: "0.7s" }} />
                 </>
               )}
-              <div className="relative w-32 h-32 rounded-full overflow-hidden shadow-2xl ring-4 ring-white/20">
+              <div className="relative w-32 h-32 rounded-full overflow-hidden shadow-2xl ring-4 ring-usly-pink/40">
                 <img src={avatar} alt={partnerName} className="w-full h-full object-cover" />
               </div>
             </div>
-            <p className="text-white text-2xl font-bold mb-2">{partnerName}</p>
-            <p className="text-white/60 text-sm font-medium">
-              {status === "error"
-                ? "🚫 Camera / microphone blocked"
-                : status === "no_camera"
-                ? "Voice call (Camera not available)"
-                : status === "ringing"
-                ? "Ringing…"
-                : status === "connected" && callType === "audio"
-                ? fmt(duration)
-                : "Connecting HD Video…"}
-            </p>
+            <p className="text-white text-2xl font-bold mb-2 tracking-tight">{partnerName}</p>
+            <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10 text-white/80 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>
+                {status === "error"
+                  ? "🚫 Camera / microphone blocked"
+                  : status === "no_camera"
+                  ? "Voice call (Camera not available)"
+                  : status === "ringing"
+                  ? "Ringing your love…"
+                  : status === "connected" && callType === "audio"
+                  ? `In Call • ${fmt(duration)}`
+                  : "Connecting HD Video…"}
+              </span>
+            </div>
           </div>
         )}
 
-        <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none" />
-        <div className="absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
+        {/* Subtle Vignettes for top and bottom controls */}
+        <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/80 via-black/35 to-transparent pointer-events-none" />
+        <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 via-black/45 to-transparent pointer-events-none" />
       </div>
 
-      {/* ── Self PiP ──────────────────────────────────────────────────────── */}
+      {/* ── Self / Secondary Picture-in-Picture (PiP) ────────────────────────── */}
       {callType === "video" && (
         <div
-          className="absolute top-16 right-4 z-30 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-white/25 bg-zinc-900 transition-all duration-300 active:scale-95"
-          style={{ width: 96, height: 144 }}
-          onClick={(e) => { e.stopPropagation(); flipCamera(); }}
+          className={`absolute ${pipStyles[pipCorner] || pipStyles["top-right"]} z-30 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-white/30 bg-zinc-900/90 backdrop-blur-md transition-all duration-300 cursor-pointer active:scale-95 group hover:ring-usly-pink`}
+          style={{ width: 104, height: 156 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsSwapped(!isSwapped);
+          }}
+          title="Click to swap view • Double click corner button to move"
         >
           <video
             ref={(el) => {
-              localVideoRef.current = el;
-              if (el && localStreamRef.current && el.srcObject !== localStreamRef.current) {
-                el.srcObject = localStreamRef.current;
+              const target = isSwapped ? remoteVideoRef : localVideoRef;
+              target.current = el;
+              const stream = isSwapped ? remoteStreamRef.current : localStreamRef.current;
+              if (el && stream && el.srcObject !== stream) {
+                el.srcObject = stream;
                 el.play().catch(() => {});
               }
             }}
-            autoPlay playsInline muted
-            className={`w-full h-full object-cover scale-x-[-1] ${isVideoOff ? "opacity-0" : "opacity-100"}`}
+            autoPlay playsInline muted={!isSwapped}
+            className={`w-full h-full object-cover ${!isSwapped ? "scale-x-[-1]" : ""} ${
+              (!isSwapped && isVideoOff) ? "opacity-0" : "opacity-100"
+            }`}
           />
-          {isVideoOff && (
+          {!isSwapped && isVideoOff && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-white/50">
               <VideoOff className="w-6 h-6 mb-1 text-zinc-400" />
-              <span className="text-[10px]">Off</span>
+              <span className="text-[10px] font-bold">Cam Off</span>
             </div>
           )}
-          <div className="absolute bottom-1 right-1 bg-black/50 backdrop-blur-md rounded-full p-1">
-            <SwitchCamera className="w-3 h-3 text-white/80" />
-          </div>
+
+          {/* Move corner trigger button */}
+          <button
+            onClick={cyclePipCorner}
+            title="Move picture-in-picture position"
+            className="absolute top-1 left-1 bg-black/60 backdrop-blur-md rounded-full p-1 opacity-70 group-hover:opacity-100 transition hover:bg-black/90 text-white"
+          >
+            <Sparkles className="w-3 h-3 text-amber-300" />
+          </button>
+
+          {/* Flip camera on self-view */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              flipCamera();
+            }}
+            title="Switch front/back camera"
+            className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-md rounded-full p-1.5 opacity-80 group-hover:opacity-100 transition hover:bg-black/90 text-white"
+          >
+            <SwitchCamera className="w-3 h-3 text-white" />
+          </button>
         </div>
       )}
 
-      {/* ── Top bar ───────────────────────────────────────────────────────── */}
-      <div className={`relative z-20 flex items-center space-x-3 px-5 pt-12 transition-opacity duration-300 ${showUI || status !== "connected" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
-        <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-white/30 flex-shrink-0">
-          <img src={avatar} alt={partnerName} className="w-full h-full object-cover" />
+      {/* ── Top Bar with Status & Controls ─────────────────────────────────── */}
+      <div className={`relative z-20 flex items-center justify-between px-4 sm:px-6 pt-10 sm:pt-12 transition-opacity duration-300 ${showUI || status !== "connected" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+        <div className="flex items-center space-x-3">
+          <div className="relative w-10 h-10 rounded-full overflow-hidden ring-2 ring-usly-pink/60 shadow-lg flex-shrink-0">
+            <img src={avatar} alt={partnerName} className="w-full h-full object-cover" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-black" />
+          </div>
+          <div>
+            <p className="text-white font-black text-sm sm:text-base leading-tight tracking-tight drop-shadow-md">{partnerName}</p>
+            <div className="flex items-center space-x-2 text-[11px] text-white/80 leading-tight mt-0.5">
+              {status === "connected" ? (
+                <>
+                  <span className="flex items-center space-x-1 font-mono font-bold text-white">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                    <span>{fmt(duration)}</span>
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 font-bold text-[9px]">
+                    HD 1080p
+                  </span>
+                </>
+              ) : status === "ringing" ? (
+                <span className="text-pink-300 font-medium animate-pulse">Ringing…</span>
+              ) : (
+                <span className="text-zinc-300">Connecting…</span>
+              )}
+            </div>
+          </div>
         </div>
-        <div>
-          <p className="text-white font-bold text-base leading-tight">{partnerName}</p>
-          <p className="text-xs text-white/70 leading-tight mt-0.5">
-            {status === "connected" ? (
-              <span className="flex items-center space-x-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
-                <span className="font-mono">{fmt(duration)}</span>
-                <span className="text-emerald-400/90 font-medium">HD</span>
-              </span>
-            ) : status === "ringing" ? "Ringing…" : "Connecting…"}
-          </p>
+
+        {/* Top Right Action Pills */}
+        <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
+          {/* P2P Encrypted Badge */}
+          <div className="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[10px] text-white/70">
+            <Lock className="w-3 h-3 text-emerald-400" />
+            <span>P2P Encrypted</span>
+          </div>
+
+          {/* Aspect Ratio Mode (Fit vs Cover) */}
+          {callType === "video" && (
+            <button
+              onClick={() => setIsFitMode(!isFitMode)}
+              title={isFitMode ? "Switch to Fullscreen Fill" : "Switch to Fit Screen"}
+              className="p-2 rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md border border-white/15 text-white/90 transition active:scale-95 shadow-lg flex items-center justify-center"
+            >
+              {isFitMode ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── Heart burst ───────────────────────────────────────────────────── */}
+      {/* ── Double-Tap Heart Burst Overlay ─────────────────────────────────── */}
       {heartBurst && (
         <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-          <div className="text-8xl animate-bounce">💖</div>
+          <div className="text-9xl animate-ping" style={{ animationDuration: "1s" }}>💖</div>
         </div>
       )}
+
+      {/* ── Floating Emojis Stream (Drifts upward smoothly) ────────────────── */}
+      <div className="absolute inset-0 pointer-events-none z-35 overflow-hidden">
+        {floatingReactions.map((r) => (
+          <div
+            key={r.id}
+            className="absolute bottom-28 text-3xl sm:text-4xl animate-float-up"
+            style={{ left: `${r.left}%` }}
+          >
+            {r.emoji}
+          </div>
+        ))}
+      </div>
 
       {/* ── Live Chat Overlay ─────────────────────────────────────────────── */}
       {showLiveChat && status === "connected" && (
@@ -811,9 +947,9 @@ export default function CallModal({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between mb-1.5 px-1">
-            <div className="flex items-center space-x-1.5 bg-black/45 backdrop-blur-md border border-white/15 px-2.5 py-0.5 rounded-full text-[11px] text-white/90 font-medium shadow-md">
+            <div className="flex items-center space-x-1.5 bg-black/50 backdrop-blur-md border border-white/15 px-2.5 py-0.5 rounded-full text-[11px] text-white/90 font-medium shadow-md">
               <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
-              <span>Live Chat</span>
+              <span>In-Call Live Chat</span>
             </div>
             <button onClick={() => setShowLiveChat(false)} className="text-[10px] text-white/70 hover:text-white bg-black/40 hover:bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 transition active:scale-95">
               Hide
@@ -821,13 +957,13 @@ export default function CallModal({
           </div>
           <div className="overflow-y-auto space-y-1.5 pr-1 scrollbar-none" style={{ maxHeight: 185, maskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)", WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)" }}>
             {liveMessages.length === 0 ? (
-              <div className="text-[11px] text-white/60 italic px-2 py-1 bg-black/30 backdrop-blur-sm rounded-xl inline-block">No comments yet. Say something sweet... ✨</div>
+              <div className="text-[11px] text-white/60 italic px-2.5 py-1 bg-black/35 backdrop-blur-sm rounded-xl inline-block border border-white/5">No comments yet. Say something sweet... ✨</div>
             ) : (
               liveMessages.map((msg) => (
                 <div key={msg.id} className="flex items-start space-x-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
                   <img src={msg.senderAvatar || (msg.isMine ? myAvatar : avatar)} alt={msg.senderName} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/30 flex-shrink-0 mt-0.5" />
-                  <div className={`rounded-2xl px-3 py-1.5 text-xs shadow-lg max-w-[85%] break-words border ${msg.isMine ? "bg-pink-950/60 border-pink-500/30 text-white backdrop-blur-md" : "bg-black/60 border-white/15 text-white backdrop-blur-md"}`}>
-                    <span className="font-semibold text-white/95 mr-1.5">{msg.isMine ? "You" : msg.senderName}</span>
+                  <div className={`rounded-2xl px-3 py-1.5 text-xs shadow-lg max-w-[85%] break-words border ${msg.isMine ? "bg-pink-950/70 border-pink-500/40 text-white backdrop-blur-md" : "bg-black/65 border-white/15 text-white backdrop-blur-md"}`}>
+                    <span className="font-bold text-usly-coral mr-1.5">{msg.isMine ? "You" : msg.senderName}</span>
                     <span className="text-white/90">{msg.content}</span>
                   </div>
                 </div>
@@ -842,13 +978,14 @@ export default function CallModal({
       <div
         className={`absolute bottom-0 inset-x-0 z-30 flex flex-col items-center pb-8 sm:pb-10 px-4 transition-opacity duration-300 ${showUI || callType === "audio" || isInputFocused || status !== "connected" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
       >
+        {/* Quick Romantic Love Ping Trigger */}
         {(!showLiveChat || status !== "connected") && (
           <button
             onClick={(e) => { e.stopPropagation(); sendHeart(); }}
-            className="mb-4 flex items-center space-x-2 px-6 py-2.5 rounded-full bg-black/50 border border-white/25 backdrop-blur-xl text-white text-sm font-semibold active:scale-95 transition shadow-lg"
+            className="mb-4 flex items-center space-x-2 px-6 py-2.5 rounded-full bg-gradient-love text-white text-sm font-bold active:scale-95 transition shadow-xl shadow-usly-pink/30 hover:opacity-95"
           >
-            <Heart className="w-4 h-4 fill-pink-500 text-pink-500 animate-pulse" />
-            <span>Send Love</span>
+            <Heart className="w-4 h-4 fill-white text-white animate-pulse" />
+            <span>Send Love 💖</span>
           </button>
         )}
 
@@ -858,7 +995,7 @@ export default function CallModal({
             className="flex items-center space-x-1.5 sm:space-x-2 w-full max-w-sm mb-3 px-1"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="relative flex-1 flex items-center bg-black/60 backdrop-blur-xl border border-white/20 rounded-full px-3.5 py-1.5 sm:py-2 shadow-xl focus-within:border-pink-500/80 transition">
+            <div className="relative flex-1 flex items-center bg-black/65 backdrop-blur-xl border border-white/20 rounded-full px-3.5 py-1.5 sm:py-2 shadow-xl focus-within:border-pink-500/80 transition">
               <input
                 type="text"
                 value={inCallText}
@@ -879,7 +1016,10 @@ export default function CallModal({
                 <button
                   key={emoji}
                   type="button"
-                  onClick={() => sendLiveComment(emoji)}
+                  onClick={() => {
+                    sendLiveComment(emoji);
+                    triggerFloatingEmoji(emoji);
+                  }}
                   className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-xs sm:text-sm active:scale-90 transition hover:scale-110 shadow-sm"
                 >
                   {emoji}
@@ -889,36 +1029,44 @@ export default function CallModal({
           </form>
         )}
 
+        {/* Main Floating Glass Action Bar */}
         <div
-          className="w-full max-w-sm flex items-center justify-around bg-black/55 backdrop-blur-2xl border border-white/15 rounded-full px-3.5 py-2.5 sm:px-5 sm:py-3 shadow-2xl"
+          className="w-full max-w-sm flex items-center justify-around bg-black/60 backdrop-blur-2xl border border-white/20 rounded-full px-3.5 py-2.5 sm:px-5 sm:py-3 shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Mute Mic */}
           <button
             onClick={toggleMic}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isMicMuted ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white" : "bg-white/20 text-white hover:bg-white/30"}`}
+            title={isMicMuted ? "Unmute Microphone" : "Mute Microphone"}
+            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isMicMuted ? "bg-red-500 shadow-lg shadow-red-500/40 text-white" : "bg-white/15 text-white hover:bg-white/25"}`}
           >
             {isMicMuted ? <MicOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Mic className="w-5 h-5 sm:w-6 sm:h-6" />}
           </button>
 
+          {/* Toggle Video or Speaker */}
           {callType === "video" ? (
             <button
               onClick={toggleVideo}
-              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isVideoOff ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white" : "bg-white/20 text-white hover:bg-white/30"}`}
+              title={isVideoOff ? "Turn On Camera" : "Turn Off Camera"}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isVideoOff ? "bg-red-500 shadow-lg shadow-red-500/40 text-white" : "bg-white/15 text-white hover:bg-white/25"}`}
             >
               {isVideoOff ? <VideoOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Video className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
           ) : (
             <button
               onClick={toggleSpeaker}
-              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isSpeakerOff ? "bg-red-500 text-white" : "bg-white/20 text-white"}`}
+              title={isSpeakerOff ? "Unmute Speaker" : "Mute Speaker"}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isSpeakerOff ? "bg-red-500 text-white" : "bg-white/15 text-white hover:bg-white/25"}`}
             >
               {isSpeakerOff ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
           )}
 
+          {/* Live Chat Drawer */}
           <button
             onClick={toggleLiveChat}
-            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${showLiveChat ? "bg-pink-500/85 text-white shadow-lg shadow-pink-500/35 border border-pink-400/40" : "bg-white/20 text-white hover:bg-white/30"}`}
+            title="Toggle Live Chat"
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${showLiveChat ? "bg-pink-500 text-white shadow-lg shadow-pink-500/40 border border-pink-400/50" : "bg-white/15 text-white hover:bg-white/25"}`}
           >
             <MessageCircle className="w-5 h-5 sm:w-6 sm:h-6" />
             {!showLiveChat && unreadChatCount > 0 && (
@@ -928,23 +1076,38 @@ export default function CallModal({
             )}
           </button>
 
+          {/* Camera Flip */}
           {callType === "video" && (
             <button
               onClick={flipCamera}
-              className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+              title="Flip Camera"
+              className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition active:scale-90"
             >
               <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           )}
 
+          {/* Hang Up Button */}
           <button
             onClick={endCall}
+            title="End Call"
             className="w-12 h-12 sm:w-13 sm:h-13 rounded-full bg-red-600 hover:bg-red-700 active:scale-90 text-white flex items-center justify-center transition shadow-2xl shadow-red-600/50"
           >
             <PhoneOff className="w-6 h-6 sm:w-7 sm:h-7" />
           </button>
         </div>
       </div>
+
+      <style>{`
+        @keyframes floatUp {
+          0% { opacity: 1; transform: translateY(0) scale(0.8) rotate(0deg); }
+          50% { transform: translateY(-120px) scale(1.2) rotate(15deg); }
+          100% { opacity: 0; transform: translateY(-240px) scale(1.4) rotate(-15deg); }
+        }
+        .animate-float-up {
+          animation: floatUp 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+      `}</style>
     </div>
   );
 }
