@@ -543,15 +543,16 @@ export default function ChatPage() {
     };
   }, [selectedUser]);
 
-  // Safety net: stop ALL call alerts whenever incomingCall clears (any path)
+  // Safety net: stop ALL call alerts & notifications whenever incomingCall or activeCall clears (any path)
   useEffect(() => {
-    if (!incomingCall) {
+    if (!incomingCall && !activeCall) {
       ringingCallIdRef.current = null;
       notificationService.stopRingtone();
-    } else {
+      setActiveToast((prev) => (prev?.type === "call" ? null : prev));
+    } else if (incomingCall) {
       ringingCallIdRef.current = incomingCall.callId;
     }
-  }, [incomingCall]);
+  }, [incomingCall, activeCall]);
 
   // 3. Real-time EventSource Stream + Polling Fallback with Auto-Reconnect
   useEffect(() => {
@@ -2052,8 +2053,13 @@ export default function ChatPage() {
           myAvatar={currentUser.avatar}
           partnerName={activeCall.partnerName || selectedUser?.name || "Partner"}
           partnerUsername={activeCall.partnerUsername || selectedUser?.username || "partner"}
-          partnerAvatar={activeCall.partnerAvatar || selectedUser?.avatar}
-          onEndCall={() => setActiveCall(null)}
+          onEndCall={() => {
+            setActiveCall(null);
+            setIncomingCall(null);
+            setActiveToast(null);
+            ringingCallIdRef.current = null;
+            notificationService.stopRingtone();
+          }}
           onTriggerFloatingHeart={() => setTriggerHeart(Date.now())}
         />
       )}
