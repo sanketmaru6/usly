@@ -1148,7 +1148,7 @@ export default function ChatPage() {
       <div className="flex-1 flex overflow-hidden w-full h-full relative">
         {/* LEFT SIDEBAR: Direct Messages, Requests, Search */}
         <aside
-          className={`w-full md:w-80 lg:w-96 flex-col border-r border-white/10 glass-panel z-20 h-full ${
+          className={`w-full md:w-80 lg:w-96 flex-shrink-0 flex-col border-r border-white/10 glass-panel z-20 h-full overflow-hidden ${
             selectedUser ? "hidden md:flex" : "flex"
           }`}
         >
@@ -1343,7 +1343,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 contacts.map((contact) => {
-                  const isSelected = selectedUser?.username === contact.username;
+                  const isSelected = selectedUser?.username.toLowerCase() === contact.username.toLowerCase();
                   return (
                     <button
                       key={contact.username}
@@ -1614,17 +1614,22 @@ export default function ChatPage() {
         </aside>
 
         {/* RIGHT CHAT AREA */}
-        <section className={`flex-1 flex flex-col bg-usly-dark/80 relative h-full w-full ${!selectedUser ? "hidden md:flex" : "flex"}`}>
+        <section className={`flex-1 min-w-0 flex flex-col bg-usly-dark/80 relative h-full overflow-hidden ${!selectedUser ? "hidden md:flex" : "flex"}`}>
           {selectedUser ? (
             <>
               {/* Header with Call Controls */}
               <div className="p-2 sm:p-4 glass-panel border-b border-white/10 flex items-center justify-between z-10 flex-shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 mr-2">
-                  {/* Mobile Back Button */}
+                  {/* Back / Close Chat Button */}
                   <button
-                    onClick={() => setSelectedUser(null)}
-                    className="md:hidden p-2 -ml-1 rounded-xl bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
-                    title="Back to chats"
+                    onClick={() => {
+                      setSelectedUser(null);
+                      if (currentUser) {
+                        localStorage.removeItem(`usly_active_partner_${currentUser.username}`);
+                      }
+                    }}
+                    className="p-2 -ml-1 rounded-xl bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
+                    title="Back to all chats"
                   >
                     <ArrowLeft className="w-4 h-4" />
                   </button>
