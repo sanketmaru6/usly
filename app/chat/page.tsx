@@ -74,6 +74,38 @@ function isLoveMessage(content: string = "", type?: string): boolean {
   return LOVE_EMOJIS_REGEX.test(content);
 }
 
+function mergeMessagesList(prev: MessageItem[], incoming: MessageItem[]): MessageItem[] {
+  if (!incoming || incoming.length === 0) return prev || [];
+  if (!prev || prev.length === 0) return incoming;
+
+  const map = new Map<string, MessageItem>();
+
+  for (const m of prev) {
+    if (m && m.id) {
+      map.set(m.id, m);
+    }
+  }
+
+  for (const m of incoming) {
+    if (m && m.id) {
+      for (const [key, ex] of map.entries()) {
+        if (
+          key.startsWith("opt_") &&
+          ex.content === m.content &&
+          ex.senderUsername?.toLowerCase() === m.senderUsername?.toLowerCase()
+        ) {
+          map.delete(key);
+        }
+      }
+      map.set(m.id, m);
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const { data: session, status: authStatus } = useSession();
@@ -218,7 +250,7 @@ export default function ChatPage() {
         setMessages([]);
       }
 
-      // 4. Immediately fetch newest messages from server for fresh sync
+      // 4. Immediately fetch newest messages from server and merge so no message is ever lost
       fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
         .then((r) => r.json())
         .then((data) => {
@@ -227,8 +259,11 @@ export default function ChatPage() {
             data.messages &&
             Array.isArray(data.messages)
           ) {
-            setMessages(data.messages);
-            localStorage.setItem(cacheKey, JSON.stringify(data.messages));
+            setMessages((prev) => {
+              const merged = mergeMessagesList(prev, data.messages);
+              localStorage.setItem(cacheKey, JSON.stringify(merged));
+              return merged;
+            });
           }
         })
         .catch(() => {});
@@ -288,14 +323,16 @@ export default function ChatPage() {
         }
       }
 
-      // Restore active chat partner on refresh so open chat is never hidden
+      // Restore active chat partner on refresh so open chat is always showing
       const lastPartner =
         localStorage.getItem(`usly_active_partner_${cleanUsername}`) ||
         localStorage.getItem(`usly_active_partner_${storedUsername}`);
-      if (lastPartner && parsedContacts.length > 0) {
-        const matched = parsedContacts.find(
-          (c) => c.username.toLowerCase() === lastPartner.toLowerCase()
-        );
+      if (parsedContacts.length > 0) {
+        const matched = lastPartner
+          ? parsedContacts.find(
+              (c) => c.username.toLowerCase() === lastPartner.toLowerCase()
+            ) || parsedContacts[0]
+          : parsedContacts[0];
         if (matched) {
           handleSelectContact(matched);
         }
@@ -337,6 +374,18 @@ export default function ChatPage() {
               `usly_contacts_${cleanUsername}`,
               JSON.stringify(merged)
             );
+
+            // Always keep active chat open
+            if (!selectedUserRef.current && merged.length > 0) {
+              const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
+              const matched = lastPartner
+                ? merged.find((c) => c.username.toLowerCase() === lastPartner.toLowerCase()) || merged[0]
+                : merged[0];
+              if (matched) {
+                handleSelectContact(matched);
+              }
+            }
+
             return merged;
           });
         }
@@ -348,11 +397,21 @@ export default function ChatPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.users && Array.isArray(data.users)) {
-          setSearchResults(
-            data.users.filter(
-              (u: any) => u.username.toLowerCase() !== cleanUsername
-            )
+          const filtered = data.users.filter(
+            (u: any) => u.username.toLowerCase() !== cleanUsername
           );
+          setSearchResults(filtered);
+
+          // If still no selected chat, open the first user
+          if (!selectedUserRef.current && filtered.length > 0) {
+            const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
+            const matched = lastPartner
+              ? filtered.find((u: any) => u.username.toLowerCase() === lastPartner.toLowerCase()) || filtered[0]
+              : filtered[0];
+            if (matched) {
+              handleSelectContact(matched);
+            }
+          }
         }
       })
       .catch(() => {});
@@ -405,8 +464,11 @@ export default function ChatPage() {
       .then((data) => {
         if (!isCancelled && data.messages && Array.isArray(data.messages)) {
           if (selectedUserRef.current?.username.toLowerCase() === partnerUname) {
-            setMessages(data.messages);
-            localStorage.setItem(cacheKey, JSON.stringify(data.messages));
+            setMessages((prev) => {
+              const merged = mergeMessagesList(prev, data.messages);
+              localStorage.setItem(cacheKey, JSON.stringify(merged));
+              return merged;
+            });
           }
         }
       })
@@ -743,12 +805,13 @@ export default function ChatPage() {
               selectedUserRef.current?.username.toLowerCase() === partnerUname
             ) {
               setMessages((prev) => {
+                const merged = mergeMessagesList(prev, msgData.messages);
                 if (
-                  msgData.messages.length > prev.length &&
+                  merged.length > prev.length &&
                   prev.length > 0 &&
-                  msgData.messages[msgData.messages.length - 1].senderUsername.toLowerCase() !== myUname
+                  merged[merged.length - 1].senderUsername.toLowerCase() !== myUname
                 ) {
-                  const latestMsg = msgData.messages[msgData.messages.length - 1];
+                  const latestMsg = merged[merged.length - 1];
                   soundFX.playChatSound();
                   if (isLoveMessage(latestMsg.content, latestMsg.type)) {
                     setTriggerHeart(Date.now());
@@ -756,9 +819,9 @@ export default function ChatPage() {
                 }
                 localStorage.setItem(
                   `usly_msgs_${myUname}_${partnerUname}`,
-                  JSON.stringify(msgData.messages)
+                  JSON.stringify(merged)
                 );
-                return msgData.messages;
+                return merged;
               });
             }
           }

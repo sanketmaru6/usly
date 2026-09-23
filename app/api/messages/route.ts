@@ -14,6 +14,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ messages: [] });
   }
 
+  const allMessagesMap = new Map<string, any>();
+
   // 1. Fetch from MongoDB first
   try {
     const dbRes = await connectToDatabase();
@@ -27,12 +29,13 @@ export async function GET(req: NextRequest) {
         ],
       })
         .sort({ createdAt: 1 })
-        .limit(200);
+        .limit(500);
 
       if (messages && messages.length > 0) {
-        return NextResponse.json({
-          messages: messages.map((m) => ({
-            id: m._id.toString(),
+        for (const m of messages) {
+          const id = m._id.toString();
+          allMessagesMap.set(id, {
+            id,
             senderUsername: m.senderUsername,
             senderName: m.senderName || m.senderUsername,
             senderAvatar: m.senderAvatar,
@@ -42,17 +45,39 @@ export async function GET(req: NextRequest) {
             audioDuration: m.audioDuration,
             reactions: m.reactions || [],
             createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
-          })),
-        });
+          });
+        }
       }
     }
   } catch (err: any) {
     console.error("Messages GET DB error:", err.message);
   }
 
-  // 2. Fallback to in-memory store
-  const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername);
-  return NextResponse.json({ messages: memMessages || [] });
+  // 2. Merge in-memory store so newest messages in memory are never missed
+  const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername) || [];
+  for (const m of memMessages) {
+    if (m && m.id) {
+      const existing = allMessagesMap.get(m.id);
+      if (!existing) {
+        // Also deduplicate by content + sender + time proximity
+        const isDuplicate = Array.from(allMessagesMap.values()).some(
+          (ex) =>
+            ex.content === m.content &&
+            ex.senderUsername?.toLowerCase() === m.senderUsername?.toLowerCase() &&
+            Math.abs(new Date(ex.createdAt).getTime() - new Date(m.createdAt).getTime()) < 6000
+        );
+        if (!isDuplicate) {
+          allMessagesMap.set(m.id, m);
+        }
+      }
+    }
+  }
+
+  const finalMessages = Array.from(allMessagesMap.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+
+  return NextResponse.json({ messages: finalMessages });
 }
 
 export async function POST(req: NextRequest) {
