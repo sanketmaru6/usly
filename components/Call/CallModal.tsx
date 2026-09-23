@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff,
   Heart, SwitchCamera, Volume2, VolumeX,
-  MessageCircle, Send, Smile,
+  MessageCircle, Send,
 } from "lucide-react";
-import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates, optimizeCodecs } from "@/lib/webrtc";
+import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates } from "@/lib/webrtc";
 import { notificationService } from "@/lib/notifications";
 
 const LOVE_KEYWORDS = [
@@ -55,28 +55,28 @@ export default function CallModal({
   partnerName, partnerUsername, partnerAvatar,
   onEndCall, onTriggerFloatingHeart,
 }: CallModalProps) {
-  const [status, setStatus]               = useState<Status>(isCaller ? "ringing" : "connecting");
-  const [isMicMuted, setIsMicMuted]       = useState(false);
-  const [isVideoOff, setIsVideoOff]       = useState(false);
-  const [isSpeakerOff, setIsSpeakerOff]   = useState(false);
-  const [facingMode, setFacingMode]       = useState<"user" | "environment">("user");
-  const [duration, setDuration]           = useState(0);
-  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
-  const [showUI, setShowUI]               = useState(true);
-  const [heartBurst, setHeartBurst]       = useState(false);
+  const [status, setStatus]                     = useState<Status>(isCaller ? "ringing" : "connecting");
+  const [isMicMuted, setIsMicMuted]             = useState(false);
+  const [isVideoOff, setIsVideoOff]             = useState(false);
+  const [isSpeakerOff, setIsSpeakerOff]         = useState(false);
+  const [facingMode, setFacingMode]             = useState<"user" | "environment">("user");
+  const [duration, setDuration]                 = useState(0);
+  const [hasRemoteVideo, setHasRemoteVideo]     = useState(false);
+  const [showUI, setShowUI]                     = useState(true);
+  const [heartBurst, setHeartBurst]             = useState(false);
+  const [showLiveChat, setShowLiveChat]         = useState(callType === "video");
+  const [liveMessages, setLiveMessages]         = useState<LiveComment[]>([]);
+  const [inCallText, setInCallText]             = useState("");
+  const [unreadChatCount, setUnreadChatCount]   = useState(0);
+  const [isInputFocused, setIsInputFocused]     = useState(false);
 
-  // Live Instagram Chat State
-  const [showLiveChat, setShowLiveChat]   = useState(callType === "video");
-  const [liveMessages, setLiveMessages]   = useState<LiveComment[]>([]);
-  const [inCallText, setInCallText]       = useState("");
-  const [unreadChatCount, setUnreadChatCount] = useState(0);
-  const [isInputFocused, setIsInputFocused] = useState(false);
-
+  // DOM refs
   const localVideoRef  = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const commentsEndRef = useRef<HTMLDivElement | null>(null);
 
+  // WebRTC refs (all stable)
   const pcRef           = useRef<RTCPeerConnection | null>(null);
   const localStreamRef  = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -85,346 +85,295 @@ export default function CallModal({
   const uiTimerRef      = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef    = useRef(true);
   const showLiveChatRef = useRef(showLiveChat);
-  const isInputFocusedRef = useRef(isInputFocused);
+  const isInputFocusedRef  = useRef(isInputFocused);
+  const facingModeRef      = useRef(facingMode);
+  const isSpeakerOffRef    = useRef(isSpeakerOff);
+  const durationRef        = useRef(0);
+  const statusRef          = useRef<Status>(isCaller ? "ringing" : "connecting");
 
-  // Stale-closure-proof refs
+  // Stale-closure-proof callback refs
   const onEndCallRef  = useRef(onEndCall);
   const onHeartRef    = useRef(onTriggerFloatingHeart);
-  const processedRef  = useRef({ offer: false, answer: false });
-  const candidateQueue   = useRef<any[]>([]);
-  const addedCandidates  = useRef<Set<string>>(new Set());
-
   useEffect(() => { onEndCallRef.current = onEndCall; });
   useEffect(() => { onHeartRef.current = onTriggerFloatingHeart; });
   useEffect(() => { showLiveChatRef.current = showLiveChat; }, [showLiveChat]);
   useEffect(() => { isInputFocusedRef.current = isInputFocused; }, [isInputFocused]);
+  useEffect(() => { facingModeRef.current = facingMode; }, [facingMode]);
+  useEffect(() => { isSpeakerOffRef.current = isSpeakerOff; }, [isSpeakerOff]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
-  // Auto-hide controls after 4.5s of no interaction (video mode, if user isn't typing)
+  // ─── Attach remote stream helper (called from multiple places) ───────────
+  const attachRemoteStream = (stream: MediaStream) => {
+    const rv = remoteVideoRef.current;
+    const ra = remoteAudioRef.current;
+    if (rv && rv.srcObject !== stream) {
+      rv.srcObject = stream;
+      rv.play().catch(() => { if (rv) { rv.muted = true; rv.play().catch(() => {}); } });
+    }
+    if (ra && ra.srcObject !== stream) {
+      ra.srcObject = stream;
+      ra.muted = isSpeakerOffRef.current;
+      ra.play().catch(() => {});
+    }
+    if (stream.getVideoTracks().length > 0) {
+      setHasRemoteVideo(true);
+    }
+    if (isMountedRef.current) setStatus("connected");
+  };
+
+  // ─── UI reveal / auto-hide ────────────────────────────────────────────────
   const revealUI = () => {
     setShowUI(true);
-    // Unblock browser autoplay restrictions on touch/click
-    if (remoteVideoRef.current && remoteVideoRef.current.paused) {
-      remoteVideoRef.current.play().catch(() => {});
-    }
-    if (remoteAudioRef.current && remoteAudioRef.current.paused) {
-      remoteAudioRef.current.play().catch(() => {});
-    }
+    if (remoteVideoRef.current?.paused) remoteVideoRef.current.play().catch(() => {});
+    if (remoteAudioRef.current?.paused)  remoteAudioRef.current.play().catch(() => {});
     if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
-    if (callType === "video" && status === "connected" && !isInputFocusedRef.current) {
+    if (callType === "video" && statusRef.current === "connected" && !isInputFocusedRef.current) {
       uiTimerRef.current = setTimeout(() => {
         if (!isInputFocusedRef.current) setShowUI(false);
       }, 4500);
     }
   };
 
-  // Safe candidate format normalization ensuring sdpMLineIndex or sdpMid is never null
-  const normalizeIceCandidate = (cand: any): RTCIceCandidateInit | null => {
-    if (!cand) return null;
-    const raw = typeof cand === "string" ? { candidate: cand } : cand;
-    if (!raw || typeof raw.candidate !== "string" || !raw.candidate.trim()) return null;
-    const candidateStr = raw.candidate.trim();
-
-    const hasMLine = raw.sdpMLineIndex !== undefined && raw.sdpMLineIndex !== null;
-    const hasMid = raw.sdpMid !== undefined && raw.sdpMid !== null && raw.sdpMid !== "";
-
-    return {
-      candidate: candidateStr,
-      sdpMid: hasMid ? String(raw.sdpMid) : (hasMLine ? undefined : "0"),
-      sdpMLineIndex: hasMLine ? Number(raw.sdpMLineIndex) : (hasMid ? undefined : 0),
-      usernameFragment: raw.usernameFragment,
-    };
-  };
-
-  // Safe candidate application with queuing and robust format normalization
-  const applyCandidate = async (cand: any) => {
-    const pc = pcRef.current;
-    if (!cand || !pc) return;
-    const norm = normalizeIceCandidate(cand);
-    if (!norm) return;
-    const key = `${norm.candidate}_${norm.sdpMid}_${norm.sdpMLineIndex}`;
-    if (addedCandidates.current.has(key)) return;
-
-    if (pc.remoteDescription && pc.remoteDescription.type) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(norm));
-        addedCandidates.current.add(key);
-      } catch (err) {
-        console.warn("[WebRTC] addIceCandidate error:", err);
-      }
-    } else {
-      if (!candidateQueue.current.some((c) => {
-        const n = normalizeIceCandidate(c);
-        return n && `${n.candidate}_${n.sdpMid}_${n.sdpMLineIndex}` === key;
-      })) {
-        candidateQueue.current.push(norm);
-      }
-    }
-  };
-
-  // Flush queued candidates once remote description is set
-  const flushCandidates = async () => {
-    const pc = pcRef.current;
-    if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) return;
-    while (candidateQueue.current.length > 0) {
-      const c = candidateQueue.current.shift()!;
-      const norm = normalizeIceCandidate(c);
-      if (!norm) continue;
-      const key = `${norm.candidate}_${norm.sdpMid}_${norm.sdpMLineIndex}`;
-      if (!addedCandidates.current.has(key)) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(norm));
-          addedCandidates.current.add(key);
-        } catch (err) {
-          console.warn("[WebRTC] flush candidate error:", err);
-        }
-      }
-    }
-  };
-
-  // Active ICE restart recovery for network drops or symmetric NAT transitions
-  const triggerIceRestart = async () => {
-    const pc = pcRef.current;
-    if (!pc || !isCaller || pc.signalingState === "closed") return;
-    try {
-      console.log("[WebRTC] Triggering active ICE restart...");
-      if (typeof pc.restartIce === "function") {
-        pc.restartIce();
-      }
-      const offer = await pc.createOffer({ iceRestart: true });
-      await pc.setLocalDescription(offer);
-      await fetch("/api/calls/signal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "set_offer",
-          callId,
-          offer: { type: "offer", sdp: offer.sdp },
-        }),
-        keepalive: true,
-      });
-    } catch (e) {
-      console.warn("[WebRTC] ICE restart failed:", e);
-    }
-  };
-
-  // Process incoming signal packet
-  const processSignal = async (call: any) => {
-    const pc = pcRef.current;
-    if (!call || !pc || !isMountedRef.current) return;
-
-    // Filter out any signals for different/old calls
-    if (call.callId && call.callId !== callId) return;
-
-    if (call.status === "ended" || call.status === "declined") {
-      console.log("[WebRTC] Call ended by remote peer:", call.callId);
-      onEndCallRef.current();
-      return;
-    }
-
-    // 1. Caller receives Answer from Receiver
-    if (isCaller && call.answer && !processedRef.current.answer) {
-      if (pc.signalingState === "have-local-offer") {
-        processedRef.current.answer = true;
-        try {
-          console.log("[WebRTC] Caller setting remote answer description");
-          await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
-          await flushCandidates();
-          applySenderBitrates(pc, callType === "video");
-          if (isMountedRef.current) setStatus("connected");
-        } catch (e) {
-          console.error("[WebRTC] setRemoteDescription(answer) error:", e);
-        }
-      }
-    }
-
-    // 2. Receiver receives Offer from Caller
-    if (!isCaller && call.offer && !processedRef.current.offer) {
-      if (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer") {
-        processedRef.current.offer = true;
-        try {
-          console.log("[WebRTC] Receiver setting remote offer description");
-          await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
-          await flushCandidates();
-          const ans = await pc.createAnswer();
-          await pc.setLocalDescription(ans);
-          applySenderBitrates(pc, callType === "video");
-          console.log("[WebRTC] Receiver sending answer back");
-          await fetch("/api/calls/signal", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "answer",
-              callId,
-              answer: { type: "answer", sdp: ans.sdp },
-            }),
-            keepalive: true,
-          });
-          if (isMountedRef.current) setStatus("connected");
-        } catch (e) {
-          console.error("[WebRTC] Receiver Offer/Answer error:", e);
-        }
-      }
-    }
-
-    // 3. Apply remote ICE candidates
-    const cands = isCaller ? call.receiverCandidates : call.callerCandidates;
-    if (Array.isArray(cands)) {
-      for (const c of cands) {
-        await applyCandidate(c);
-      }
-    }
-
-    // 4. Reactions
-    if (call.lastReaction && Date.now() - call.lastReaction.timestamp < 1500) {
-      onHeartRef.current?.();
-      setHeartBurst(true);
-      setTimeout(() => setHeartBurst(false), 2000);
-    }
-  };
-
-  // ── Main WebRTC Initialization ───────────────────────────────────────────
+  // ─── Main WebRTC engine (everything inside one useEffect) ─────────────────
   useEffect(() => {
     isMountedRef.current = true;
-    processedRef.current = { offer: false, answer: false };
-
-    // Immediately stop ringtone, vibration, and close system notification once in-call
     notificationService.stopRingtone();
 
+    // Internal state (no stale closures)
+    const processed  = { offer: false, answer: false };
+    const candQueue: RTCIceCandidateInit[] = [];
+    const addedKeys  = new Set<string>();
+
+    // ── Candidate helpers ────────────────────────────────────────────────────
+    function normalizeCand(raw: any): RTCIceCandidateInit | null {
+      if (!raw) return null;
+      const obj = typeof raw === "string" ? { candidate: raw } : raw;
+      if (typeof obj.candidate !== "string" || !obj.candidate.trim()) return null;
+      const hasMLine = obj.sdpMLineIndex !== undefined && obj.sdpMLineIndex !== null;
+      const hasMid   = obj.sdpMid !== undefined && obj.sdpMid !== null && obj.sdpMid !== "";
+      return {
+        candidate:         obj.candidate.trim(),
+        sdpMid:            hasMid   ? String(obj.sdpMid)           : (hasMLine ? undefined : "0"),
+        sdpMLineIndex:     hasMLine ? Number(obj.sdpMLineIndex)     : (hasMid   ? undefined : 0),
+        usernameFragment:  obj.usernameFragment,
+      };
+    }
+
+    function candKey(c: RTCIceCandidateInit) {
+      return `${c.candidate}|${c.sdpMid}|${c.sdpMLineIndex}`;
+    }
+
+    async function addCand(pc: RTCPeerConnection, raw: any) {
+      const norm = normalizeCand(raw);
+      if (!norm) return;
+      const key = candKey(norm);
+      if (addedKeys.has(key)) return;
+
+      if (pc.remoteDescription?.type) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(norm));
+          addedKeys.add(key);
+        } catch (e) {
+          console.warn("[ICE] addIceCandidate error:", e);
+        }
+      } else {
+        if (!candQueue.some((c) => candKey(c) === key)) candQueue.push(norm);
+      }
+    }
+
+    async function flushQueue(pc: RTCPeerConnection) {
+      if (!pc.remoteDescription?.type) return;
+      while (candQueue.length > 0) {
+        const c = candQueue.shift()!;
+        const key = candKey(c);
+        if (!addedKeys.has(key)) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+            addedKeys.add(key);
+          } catch (e) {
+            console.warn("[ICE] flush error:", e);
+          }
+        }
+      }
+    }
+
+    // ── ICE restart ─────────────────────────────────────────────────────────
+    async function triggerIceRestart(pc: RTCPeerConnection) {
+      if (!isCaller || pc.signalingState === "closed") return;
+      try {
+        if (typeof pc.restartIce === "function") pc.restartIce();
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        await fetch("/api/calls/signal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "set_offer", callId, offer: { type: "offer", sdp: offer.sdp } }),
+          keepalive: true,
+        });
+      } catch (e) {
+        console.warn("[ICE] restart failed:", e);
+      }
+    }
+
+    // ── Signal processor ────────────────────────────────────────────────────
+    async function processSignal(pc: RTCPeerConnection, call: any) {
+      if (!call || !isMountedRef.current) return;
+      if (call.callId && call.callId !== callId) return;
+
+      if (call.status === "ended" || call.status === "declined") {
+        onEndCallRef.current?.();
+        return;
+      }
+
+      // Caller: receive answer
+      if (isCaller && call.answer && !processed.answer) {
+        if (pc.signalingState === "have-local-offer") {
+          processed.answer = true;
+          try {
+            console.log("[WebRTC] Caller: setting remote answer");
+            await pc.setRemoteDescription(new RTCSessionDescription(call.answer));
+            await flushQueue(pc);
+            applySenderBitrates(pc, callType === "video");
+            if (isMountedRef.current) setStatus("connected");
+          } catch (e) {
+            console.error("[WebRTC] setRemoteDescription(answer) error:", e);
+            processed.answer = false; // allow retry
+          }
+        }
+      }
+
+      // Receiver: receive offer
+      if (!isCaller && call.offer && !processed.offer) {
+        if (pc.signalingState === "stable" || pc.signalingState === "have-remote-offer") {
+          processed.offer = true;
+          try {
+            console.log("[WebRTC] Receiver: setting remote offer, creating answer");
+            await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+            await flushQueue(pc);
+            const ans = await pc.createAnswer();
+            await pc.setLocalDescription(ans);
+            applySenderBitrates(pc, callType === "video");
+            await fetch("/api/calls/signal", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "answer", callId, answer: { type: "answer", sdp: ans.sdp } }),
+              keepalive: true,
+            });
+            if (isMountedRef.current) setStatus("connected");
+          } catch (e) {
+            console.error("[WebRTC] offer/answer error:", e);
+            processed.offer = false; // allow retry
+          }
+        }
+      }
+
+      // Apply remote ICE candidates
+      const cands: any[] = isCaller ? (call.receiverCandidates || []) : (call.callerCandidates || []);
+      for (const c of cands) {
+        await addCand(pc, c);
+      }
+
+      // Reactions
+      if (call.lastReaction && Date.now() - call.lastReaction.timestamp < 1500) {
+        onHeartRef.current?.();
+        setHeartBurst(true);
+        setTimeout(() => setHeartBurst(false), 2000);
+      }
+    }
+
+    // ── Start ────────────────────────────────────────────────────────────────
     async function start() {
-      // 1. Acquire local user media (camera + microphone)
+      // 1. Get user media
       let stream: MediaStream;
       let gotVideo = callType === "video";
       try {
         stream = await getUserMediaStream(callType === "video", true, "user");
         if (callType === "video" && stream.getVideoTracks().length === 0) {
           gotVideo = false;
-          setStatus("no_camera");
+          if (isMountedRef.current) setStatus("no_camera");
         }
       } catch (err) {
         console.error("[WebRTC] getUserMedia failed:", err);
-        setStatus("error");
+        if (isMountedRef.current) setStatus("error");
         return;
       }
-
-      if (!isMountedRef.current) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
+      if (!isMountedRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
 
       localStreamRef.current = stream;
 
-      // Render local video in self PiP
+      // Attach local video
       if (localVideoRef.current && gotVideo) {
         localVideoRef.current.srcObject = stream;
         localVideoRef.current.play().catch(() => {});
       }
 
-      // 2. Initialize RTCPeerConnection with STUN + TURN servers
+      // 2. Build RTCPeerConnection
       const pc = new RTCPeerConnection(ICE_SERVERS);
       pcRef.current = pc;
 
-      // Add local audio and video tracks
-      stream.getTracks().forEach((track) => {
-        pc.addTrack(track, stream);
-      });
+      // Add all tracks
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
-      // 3. Handle remote incoming tracks (video & audio)
+      // 3. Handle remote tracks
       pc.ontrack = (ev) => {
         if (!isMountedRef.current) return;
-        console.log("[WebRTC] Remote track arrived:", ev.track.kind);
+        console.log("[WebRTC] ontrack:", ev.track.kind);
 
-        if (!remoteStreamRef.current) {
-          remoteStreamRef.current = new MediaStream();
-        }
-        if (!remoteStreamRef.current.getTracks().some((t) => t.id === ev.track.id)) {
-          remoteStreamRef.current.addTrack(ev.track);
-        }
+        let rs = remoteStreamRef.current;
+        if (!rs) { rs = new MediaStream(); remoteStreamRef.current = rs; }
+
+        // Prefer ev.streams[0] which is the canonical MediaStream
         if (ev.streams && ev.streams[0]) {
-          ev.streams[0].getTracks().forEach((t) => {
-            if (!remoteStreamRef.current?.getTracks().some((x) => x.id === t.id)) {
-              remoteStreamRef.current?.addTrack(t);
-            }
-          });
-        }
-        const inbound = remoteStreamRef.current;
-
-        // Attach to remote video (muted for guaranteed zero-delay autoplay across all browsers)
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = inbound;
-          remoteVideoRef.current.play().catch((e) => {
-            console.warn("video play fallback:", e);
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.muted = true;
-              remoteVideoRef.current.play().catch(() => {});
-            }
-          });
+          const inbound = ev.streams[0];
+          remoteStreamRef.current = inbound;
+          attachRemoteStream(inbound);
+        } else {
+          if (!rs.getTracks().some((t) => t.id === ev.track.id)) rs.addTrack(ev.track);
+          attachRemoteStream(rs);
         }
 
-        // Dedicated low-latency audio element handling
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = inbound;
-          remoteAudioRef.current.muted = isSpeakerOff;
-          remoteAudioRef.current.play().catch((e) => console.warn("audio play:", e));
-        }
-
-        const hasVid = inbound.getVideoTracks().length > 0;
-        if (hasVid) {
+        // Watch for unmute (happens after ICE completes)
+        ev.track.onunmute = () => {
+          if (!isMountedRef.current) return;
           setHasRemoteVideo(true);
-        }
-
-        inbound.getVideoTracks().forEach((vt) => {
-          vt.onunmute = () => {
-            setHasRemoteVideo(true);
-            remoteVideoRef.current?.play().catch(() => {});
-          };
-        });
-
-        if (isMountedRef.current) setStatus("connected");
+          remoteVideoRef.current?.play().catch(() => {});
+        };
       };
 
-      // 4. Track connection state
+      // 4. Connection state tracking
       pc.onconnectionstatechange = () => {
         if (!isMountedRef.current) return;
         console.log("[WebRTC] connectionState:", pc.connectionState);
-        if (pc.connectionState === "connected") {
-          applySenderBitrates(pc, callType === "video");
-          setStatus("connected");
-          if (callType === "video" && remoteStreamRef.current) {
-            if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-              remoteVideoRef.current.srcObject = remoteStreamRef.current;
-            }
-            remoteVideoRef.current?.play().catch(() => {});
-            if (remoteStreamRef.current.getVideoTracks().length > 0) {
-              setHasRemoteVideo(true);
-            }
-          }
-        } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-          console.log("[WebRTC] Connection failed, attempting ICE restart...");
-          triggerIceRestart();
+        switch (pc.connectionState) {
+          case "connected":
+            applySenderBitrates(pc, callType === "video");
+            if (isMountedRef.current) setStatus("connected");
+            if (remoteStreamRef.current) attachRemoteStream(remoteStreamRef.current);
+            break;
+          case "failed":
+          case "disconnected":
+            triggerIceRestart(pc);
+            break;
         }
       };
 
       pc.oniceconnectionstatechange = () => {
         if (!isMountedRef.current) return;
         console.log("[WebRTC] iceConnectionState:", pc.iceConnectionState);
-        if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
-          applySenderBitrates(pc, callType === "video");
-          setStatus("connected");
-          if (callType === "video" && remoteStreamRef.current) {
-            if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-              remoteVideoRef.current.srcObject = remoteStreamRef.current;
-            }
-            remoteVideoRef.current?.play().catch(() => {});
-            if (remoteStreamRef.current.getVideoTracks().length > 0) {
-              setHasRemoteVideo(true);
-            }
-          }
-        } else if (pc.iceConnectionState === "failed") {
-          triggerIceRestart();
+        switch (pc.iceConnectionState) {
+          case "connected":
+          case "completed":
+            applySenderBitrates(pc, callType === "video");
+            if (isMountedRef.current) setStatus("connected");
+            if (remoteStreamRef.current) attachRemoteStream(remoteStreamRef.current);
+            break;
+          case "failed":
+            triggerIceRestart(pc);
+            break;
         }
       };
 
-      // 5. Send local ICE candidates to remote peer with keepalive
+      // 5. Send ICE candidates
       pc.onicecandidate = async (ev) => {
         if (!ev.candidate || !isMountedRef.current) return;
         try {
@@ -442,7 +391,7 @@ export default function CallModal({
         } catch {}
       };
 
-      // 6. If Caller: create offer and send to signaling server
+      // 6. Caller creates offer
       if (isCaller) {
         try {
           const offer = await pc.createOffer({
@@ -450,53 +399,51 @@ export default function CallModal({
             offerToReceiveVideo: callType === "video",
           });
           await pc.setLocalDescription(offer);
-          applySenderBitrates(pc, callType === "video");
-          console.log("[WebRTC] Caller created and sent offer");
+          console.log("[WebRTC] Caller: sending offer");
           await fetch("/api/calls/signal", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "set_offer",
-              callId,
-              offer: { type: "offer", sdp: offer.sdp },
-            }),
+            body: JSON.stringify({ action: "set_offer", callId, offer: { type: "offer", sdp: offer.sdp } }),
             keepalive: true,
           });
         } catch (e) {
-          console.error("[WebRTC] Offer failed:", e);
+          console.error("[WebRTC] createOffer failed:", e);
         }
       }
 
-      // 7. Initial signal state fetch
+      // 7. Fetch initial signal state
       try {
-        const res = await fetch(`/api/calls/signal?callId=${callId}`);
-        if (res.ok) {
-          const d = await res.json();
-          if (d.call) await processSignal(d.call);
+        const r = await fetch(`/api/calls/signal?callId=${callId}`);
+        if (r.ok) {
+          const d = await r.json();
+          if (d.call && pcRef.current) await processSignal(pcRef.current, d.call);
         }
       } catch {}
 
-      // 8. Real-time SSE Stream for instant sub-20ms signaling & live chat
+      // 8. SSE real-time stream
       try {
         const es = new EventSource(`/api/calls/stream?callId=${callId}&username=${myUsername}`);
         esRef.current = es;
+
         es.addEventListener("call_update", (e) => {
           try {
-            processSignal(JSON.parse(e.data));
+            const data = JSON.parse((e as MessageEvent).data);
+            if (pcRef.current) processSignal(pcRef.current, data);
           } catch {}
         });
+
         es.addEventListener("candidate", (e) => {
           try {
-            const d = JSON.parse(e.data);
-            if (d.isCaller !== isCaller) applyCandidate(d.candidate);
+            const d = JSON.parse((e as MessageEvent).data);
+            if (d.isCaller !== isCaller && pcRef.current) addCand(pcRef.current, d.candidate);
           } catch {}
         });
+
         es.addEventListener("message", (e) => {
           try {
-            const msg = JSON.parse(e.data);
+            const msg = JSON.parse((e as MessageEvent).data);
             const senderUname = (msg.senderUsername || "").toLowerCase();
-            const partnerUname = (partnerUsername || "").toLowerCase();
-            if (senderUname === partnerUname) {
+            if (senderUname === partnerUsername.toLowerCase()) {
               setLiveMessages((prev) => {
                 if (prev.some((m) => m.id === msg.id)) return prev;
                 return [
@@ -513,9 +460,7 @@ export default function CallModal({
                 ];
               });
               soundFX.playChatSound();
-              if (!showLiveChatRef.current) {
-                setUnreadChatCount((c) => c + 1);
-              }
+              if (!showLiveChatRef.current) setUnreadChatCount((c) => c + 1);
               if (isLoveMessage(msg.content)) {
                 setHeartBurst(true);
                 setTimeout(() => setHeartBurst(false), 2000);
@@ -523,37 +468,37 @@ export default function CallModal({
             }
           } catch {}
         });
+
+        es.onerror = () => {
+          // SSE errors are handled gracefully; polling is the safety net
+        };
       } catch {}
 
-      // 9. Adaptive High-Frequency Signaling Loop
-      // 150ms during negotiation for instant handshake (<300ms total)
-      // 1200ms once connected to conserve CPU, battery, and background bandwidth
-      let pollTimeout: NodeJS.Timeout | null = null;
-      const pollSignal = async () => {
+      // 9. Adaptive polling loop (fast until connected, slow after)
+      const poll = async () => {
         if (!isMountedRef.current) return;
         try {
           const r = await fetch(`/api/calls/signal?callId=${callId}`);
           if (r.ok) {
             const d = await r.json();
-            if (d.call) await processSignal(d.call);
+            if (d.call && pcRef.current && isMountedRef.current) {
+              await processSignal(pcRef.current, d.call);
+            }
           }
         } catch {}
-
         if (!isMountedRef.current) return;
-        const isConnected =
+        const isConn =
           pcRef.current?.connectionState === "connected" ||
-          pcRef.current?.iceConnectionState === "connected";
-        const delay = isConnected ? 1200 : 150;
-        pollTimeout = setTimeout(pollSignal, delay);
-        pollRef.current = pollTimeout;
+          pcRef.current?.iceConnectionState === "connected" ||
+          pcRef.current?.iceConnectionState === "completed";
+        pollRef.current = setTimeout(poll, isConn ? 1500 : 120);
       };
+      pollRef.current = setTimeout(poll, 80);
 
-      pollTimeout = setTimeout(pollSignal, 80);
-      pollRef.current = pollTimeout;
-
+      // Audio call auto-ready
       if (callType === "audio") {
         setTimeout(() => {
-          if (isMountedRef.current && status !== "error") setStatus("connected");
+          if (isMountedRef.current && statusRef.current !== "error") setStatus("connected");
         }, 2000);
       }
     }
@@ -562,11 +507,8 @@ export default function CallModal({
 
     return () => {
       isMountedRef.current = false;
-      if (pollRef.current) {
-        clearTimeout(pollRef.current);
-        clearInterval(pollRef.current);
-      }
-      if (esRef.current) esRef.current.close();
+      if (pollRef.current) clearTimeout(pollRef.current);
+      if (esRef.current)   esRef.current.close();
       if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       pcRef.current?.close();
@@ -574,26 +516,24 @@ export default function CallModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callId]);
 
-  // Auto-hide UI controls after call is connected
+  // Auto-hide UI when connected on video call
   useEffect(() => {
-    if (status === "connected" && callType === "video") {
-      revealUI();
-    } else {
-      setShowUI(true);
-    }
+    if (status === "connected" && callType === "video") revealUI();
+    else setShowUI(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, callType]);
 
   // Duration timer
   useEffect(() => {
     if (status !== "connected") return;
-    const t = setInterval(() => setDuration((d) => d + 1), 1000);
+    const t = setInterval(() => { durationRef.current += 1; setDuration((d) => d + 1); }, 1000);
     return () => clearInterval(t);
   }, [status]);
 
-  // Fetch initial in-call messages
+  // Fetch recent in-call messages
   useEffect(() => {
     let active = true;
-    async function fetchRecentMessages() {
+    async function fetch_() {
       try {
         const res = await fetch(
           `/api/messages?myUsername=${encodeURIComponent(myUsername)}&partnerUsername=${encodeURIComponent(partnerUsername)}`
@@ -601,43 +541,33 @@ export default function CallModal({
         if (res.ok && active) {
           const data = await res.json();
           if (Array.isArray(data.messages)) {
-            const recent: LiveComment[] = data.messages.slice(-30).map((m: any) => ({
-              id: m.id || String(m._id || Math.random()),
-              senderUsername: m.senderUsername,
-              senderName: m.senderName || m.senderUsername,
-              senderAvatar: m.senderAvatar,
-              content: m.content,
-              createdAt: m.createdAt,
-              isMine: m.senderUsername?.toLowerCase() === myUsername?.toLowerCase(),
-            }));
-            setLiveMessages(recent);
+            setLiveMessages(
+              data.messages.slice(-30).map((m: any) => ({
+                id: m.id || String(m._id || Math.random()),
+                senderUsername: m.senderUsername,
+                senderName: m.senderName || m.senderUsername,
+                senderAvatar: m.senderAvatar,
+                content: m.content,
+                createdAt: m.createdAt,
+                isMine: m.senderUsername?.toLowerCase() === myUsername?.toLowerCase(),
+              }))
+            );
           }
         }
-      } catch (err) {
-        console.warn("Failed to load in-call messages:", err);
-      }
+      } catch {}
     }
-    if (myUsername && partnerUsername) {
-      fetchRecentMessages();
-    }
-    return () => {
-      active = false;
-    };
+    if (myUsername && partnerUsername) fetch_();
+    return () => { active = false; };
   }, [myUsername, partnerUsername]);
 
-  // Auto-scroll comments to bottom
+  // Auto-scroll comments
   useEffect(() => {
-    if (showLiveChat) {
-      commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    if (showLiveChat) commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [liveMessages, showLiveChat]);
 
+  // ── Action handlers ──────────────────────────────────────────────────────
   const toggleLiveChat = () => {
-    setShowLiveChat((prev) => {
-      const next = !prev;
-      if (next) setUnreadChatCount(0);
-      return next;
-    });
+    setShowLiveChat((prev) => { if (!prev) setUnreadChatCount(0); return !prev; });
     revealUI();
   };
 
@@ -645,51 +575,27 @@ export default function CallModal({
     const text = (customText !== undefined ? customText : inCallText).trim();
     if (!text) return;
     setInCallText("");
-
     const tempId = "live_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-    const optimisticMsg: LiveComment = {
-      id: tempId,
-      senderUsername: myUsername,
-      senderName: myName,
-      senderAvatar: myAvatar,
-      content: text,
-      createdAt: new Date().toISOString(),
-      isMine: true,
-    };
-
-    setLiveMessages((prev) => [...prev.slice(-40), optimisticMsg]);
+    setLiveMessages((prev) => [
+      ...prev.slice(-40),
+      { id: tempId, senderUsername: myUsername, senderName: myName, senderAvatar: myAvatar, content: text, createdAt: new Date().toISOString(), isMine: true },
+    ]);
     soundFX.playPop();
-
-    if (isLoveMessage(text)) {
-      setHeartBurst(true);
-      setTimeout(() => setHeartBurst(false), 2000);
-      sendHeart();
-    }
-
+    if (isLoveMessage(text)) { setHeartBurst(true); setTimeout(() => setHeartBurst(false), 2000); sendHeart(); }
     try {
       await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          senderUsername: myUsername,
-          senderName: myName,
-          senderAvatar: myAvatar,
-          receiverUsername: partnerUsername,
-          type: "text",
-          content: text,
-        }),
+        body: JSON.stringify({ senderUsername: myUsername, senderName: myName, senderAvatar: myAvatar, receiverUsername: partnerUsername, type: "text", content: text }),
       });
-    } catch (err) {
-      console.error("Failed to send in-call live message:", err);
-    }
+    } catch {}
   };
 
-  // Camera flip (hot-swap front/back)
   const flipCamera = async () => {
     const pc = pcRef.current;
     const stream = localStreamRef.current;
     if (!pc || !stream) return;
-    const next = facingMode === "user" ? "environment" : "user";
+    const next = facingModeRef.current === "user" ? "environment" : "user";
     setFacingMode(next);
     try {
       const ns = await getUserMediaStream(true, false, next);
@@ -697,10 +603,7 @@ export default function CallModal({
       if (!nv) return;
       const sender = pc.getSenders().find((s) => s.track?.kind === "video");
       if (sender) await sender.replaceTrack(nv);
-      stream.getVideoTracks().forEach((t) => {
-        t.stop();
-        stream.removeTrack(t);
-      });
+      stream.getVideoTracks().forEach((t) => { t.stop(); stream.removeTrack(t); });
       stream.addTrack(nv);
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
     } catch {}
@@ -708,18 +611,12 @@ export default function CallModal({
 
   const toggleMic = () => {
     const t = localStreamRef.current?.getAudioTracks()[0];
-    if (t) {
-      t.enabled = !t.enabled;
-      setIsMicMuted(!t.enabled);
-    }
+    if (t) { t.enabled = !t.enabled; setIsMicMuted(!t.enabled); }
   };
 
   const toggleVideo = () => {
     const t = localStreamRef.current?.getVideoTracks()[0];
-    if (t) {
-      t.enabled = !t.enabled;
-      setIsVideoOff(!t.enabled);
-    }
+    if (t) { t.enabled = !t.enabled; setIsVideoOff(!t.enabled); }
   };
 
   const toggleSpeaker = () => {
@@ -748,7 +645,7 @@ export default function CallModal({
     fetch("/api/calls/signal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "end", callId, durationSeconds: duration }),
+      body: JSON.stringify({ action: "end", callId, durationSeconds: durationRef.current }),
     }).catch(() => {});
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     pcRef.current?.close();
@@ -759,73 +656,46 @@ export default function CallModal({
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
   const avatar = partnerAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUsername}`;
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       className="fixed inset-0 z-[8000] bg-black flex flex-col select-none overflow-hidden"
       style={{ height: "100dvh" }}
       onClick={revealUI}
     >
-      {/* Audio element for all calls - lowest latency real-time voice channel */}
+      {/* Hidden audio element – plays remote audio on all call types */}
       <audio ref={remoteAudioRef} autoPlay playsInline />
 
-      {/* ── Full-screen remote video ─────────────────────────────────────── */}
+      {/* ── Full-screen remote video ───────────────────────────────────────── */}
       <div className="absolute inset-0">
         {callType === "video" && (
           <video
             ref={(el) => {
               remoteVideoRef.current = el;
+              // Auto-attach if stream already arrived before DOM mounted
               if (el && remoteStreamRef.current && el.srcObject !== remoteStreamRef.current) {
                 el.srcObject = remoteStreamRef.current;
-                el.play().catch(() => {});
+                el.play().catch(() => { if (el) { el.muted = true; el.play().catch(() => {}); } });
               }
             }}
             autoPlay
             playsInline
             muted
-            onLoadedMetadata={() => {
-              setHasRemoteVideo(true);
-              setStatus("connected");
-              remoteVideoRef.current?.play().catch(() => {});
-            }}
-            onLoadedData={() => {
-              setHasRemoteVideo(true);
-              setStatus("connected");
-              remoteVideoRef.current?.play().catch(() => {});
-            }}
-            onCanPlay={() => {
-              setHasRemoteVideo(true);
-              setStatus("connected");
-              remoteVideoRef.current?.play().catch(() => {});
-            }}
-            onPlay={() => {
-              setHasRemoteVideo(true);
-              setStatus("connected");
-            }}
-            onPlaying={() => {
-              setHasRemoteVideo(true);
-              setStatus("connected");
-            }}
-            className={`w-full h-full object-cover transition-opacity duration-200 ${
-              hasRemoteVideo ? "opacity-100" : "opacity-0"
-            }`}
+            onLoadedMetadata={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
+            onCanPlay={() => { setHasRemoteVideo(true); setStatus("connected"); remoteVideoRef.current?.play().catch(() => {}); }}
+            onPlay={() => { setHasRemoteVideo(true); setStatus("connected"); }}
+            className={`w-full h-full object-cover transition-opacity duration-300 ${hasRemoteVideo ? "opacity-100" : "opacity-0"}`}
           />
         )}
 
-        {/* Background when no remote video (connecting / audio call) */}
+        {/* Connecting / audio overlay */}
         {(!hasRemoteVideo || callType === "audio") && (
           <div className="absolute inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black flex flex-col items-center justify-center">
-            {/* Pulsing rings */}
             <div className="relative flex items-center justify-center mb-8">
               {status !== "error" && (
                 <>
-                  <div
-                    className="absolute w-48 h-48 rounded-full bg-white/5 animate-ping"
-                    style={{ animationDuration: "2.5s" }}
-                  />
-                  <div
-                    className="absolute w-36 h-36 rounded-full bg-white/5 animate-ping"
-                    style={{ animationDuration: "2.5s", animationDelay: "0.7s" }}
-                  />
+                  <div className="absolute w-48 h-48 rounded-full bg-white/5 animate-ping" style={{ animationDuration: "2.5s" }} />
+                  <div className="absolute w-36 h-36 rounded-full bg-white/5 animate-ping" style={{ animationDuration: "2.5s", animationDelay: "0.7s" }} />
                 </>
               )}
               <div className="relative w-32 h-32 rounded-full overflow-hidden shadow-2xl ring-4 ring-white/20">
@@ -847,20 +717,16 @@ export default function CallModal({
           </div>
         )}
 
-        {/* Gradient scrim — top & bottom for readability */}
         <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none" />
         <div className="absolute inset-x-0 bottom-0 h-60 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
       </div>
 
-      {/* ── Self PiP (top-right, Instagram position — ALWAYS visible during video call) ── */}
+      {/* ── Self PiP ──────────────────────────────────────────────────────── */}
       {callType === "video" && (
         <div
           className="absolute top-16 right-4 z-30 rounded-2xl overflow-hidden shadow-2xl ring-2 ring-white/25 bg-zinc-900 transition-all duration-300 active:scale-95"
           style={{ width: 96, height: 144 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            flipCamera();
-          }}
+          onClick={(e) => { e.stopPropagation(); flipCamera(); }}
         >
           <video
             ref={(el) => {
@@ -870,12 +736,8 @@ export default function CallModal({
                 el.play().catch(() => {});
               }
             }}
-            autoPlay
-            playsInline
-            muted
-            className={`w-full h-full object-cover scale-x-[-1] ${
-              isVideoOff ? "opacity-0" : "opacity-100"
-            }`}
+            autoPlay playsInline muted
+            className={`w-full h-full object-cover scale-x-[-1] ${isVideoOff ? "opacity-0" : "opacity-100"}`}
           />
           {isVideoOff && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-white/50">
@@ -883,19 +745,14 @@ export default function CallModal({
               <span className="text-[10px]">Off</span>
             </div>
           )}
-          {/* Tap to flip hint */}
           <div className="absolute bottom-1 right-1 bg-black/50 backdrop-blur-md rounded-full p-1">
             <SwitchCamera className="w-3 h-3 text-white/80" />
           </div>
         </div>
       )}
 
-      {/* ── Top bar: name + duration (Instagram style) ───────────────────── */}
-      <div
-        className={`relative z-20 flex items-center space-x-3 px-5 pt-12 transition-opacity duration-300 ${
-          showUI || status !== "connected" ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-      >
+      {/* ── Top bar ───────────────────────────────────────────────────────── */}
+      <div className={`relative z-20 flex items-center space-x-3 px-5 pt-12 transition-opacity duration-300 ${showUI || status !== "connected" ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-white/30 flex-shrink-0">
           <img src={avatar} alt={partnerName} className="w-full h-full object-cover" />
         </div>
@@ -908,79 +765,43 @@ export default function CallModal({
                 <span className="font-mono">{fmt(duration)}</span>
                 <span className="text-emerald-400/90 font-medium">HD</span>
               </span>
-            ) : status === "ringing" ? (
-              "Ringing…"
-            ) : (
-              "Connecting…"
-            )}
+            ) : status === "ringing" ? "Ringing…" : "Connecting…"}
           </p>
         </div>
       </div>
 
-      {/* ── Heart burst animation (center screen) ────────────────────────── */}
+      {/* ── Heart burst ───────────────────────────────────────────────────── */}
       {heartBurst && (
         <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
           <div className="text-8xl animate-bounce">💖</div>
         </div>
       )}
 
-      {/* ── Instagram Live Floating Comments Overlay ───────────────────── */}
+      {/* ── Live Chat Overlay ─────────────────────────────────────────────── */}
       {showLiveChat && status === "connected" && (
         <div
-          className={`absolute bottom-36 sm:bottom-40 left-3 sm:left-5 z-25 flex flex-col pointer-events-auto transition-all duration-300 max-w-[85vw] sm:max-w-sm ${
-            showUI || isInputFocused ? "opacity-100" : "opacity-85 hover:opacity-100"
-          }`}
+          className={`absolute bottom-36 sm:bottom-40 left-3 sm:left-5 z-25 flex flex-col pointer-events-auto transition-all duration-300 max-w-[85vw] sm:max-w-sm ${showUI || isInputFocused ? "opacity-100" : "opacity-85 hover:opacity-100"}`}
           style={{ maxHeight: 220 }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header pill with live pulse & hide button */}
           <div className="flex items-center justify-between mb-1.5 px-1">
             <div className="flex items-center space-x-1.5 bg-black/45 backdrop-blur-md border border-white/15 px-2.5 py-0.5 rounded-full text-[11px] text-white/90 font-medium shadow-md">
               <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
               <span>Live Chat</span>
             </div>
-            <button
-              onClick={() => setShowLiveChat(false)}
-              className="text-[10px] text-white/70 hover:text-white bg-black/40 hover:bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 transition active:scale-95"
-            >
+            <button onClick={() => setShowLiveChat(false)} className="text-[10px] text-white/70 hover:text-white bg-black/40 hover:bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/10 transition active:scale-95">
               Hide
             </button>
           </div>
-
-          {/* Scrollable comments stream with gradient fade at top */}
-          <div
-            className="overflow-y-auto space-y-1.5 pr-1 scrollbar-none"
-            style={{
-              maxHeight: 185,
-              maskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)",
-              WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)",
-            }}
-          >
+          <div className="overflow-y-auto space-y-1.5 pr-1 scrollbar-none" style={{ maxHeight: 185, maskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)", WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 18%, black 100%)" }}>
             {liveMessages.length === 0 ? (
-              <div className="text-[11px] text-white/60 italic px-2 py-1 bg-black/30 backdrop-blur-sm rounded-xl inline-block">
-                No comments yet. Say something sweet... ✨
-              </div>
+              <div className="text-[11px] text-white/60 italic px-2 py-1 bg-black/30 backdrop-blur-sm rounded-xl inline-block">No comments yet. Say something sweet... ✨</div>
             ) : (
               liveMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className="flex items-start space-x-2 animate-in fade-in slide-in-from-bottom-2 duration-200"
-                >
-                  <img
-                    src={msg.senderAvatar || (msg.isMine ? myAvatar : avatar)}
-                    alt={msg.senderName}
-                    className="w-6 h-6 rounded-full object-cover ring-1 ring-white/30 flex-shrink-0 mt-0.5"
-                  />
-                  <div
-                    className={`rounded-2xl px-3 py-1.5 text-xs shadow-lg max-w-[85%] break-words border ${
-                      msg.isMine
-                        ? "bg-pink-950/60 border-pink-500/30 text-white backdrop-blur-md"
-                        : "bg-black/60 border-white/15 text-white backdrop-blur-md"
-                    }`}
-                  >
-                    <span className="font-semibold text-white/95 mr-1.5">
-                      {msg.isMine ? "You" : msg.senderName}
-                    </span>
+                <div key={msg.id} className="flex items-start space-x-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                  <img src={msg.senderAvatar || (msg.isMine ? myAvatar : avatar)} alt={msg.senderName} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/30 flex-shrink-0 mt-0.5" />
+                  <div className={`rounded-2xl px-3 py-1.5 text-xs shadow-lg max-w-[85%] break-words border ${msg.isMine ? "bg-pink-950/60 border-pink-500/30 text-white backdrop-blur-md" : "bg-black/60 border-white/15 text-white backdrop-blur-md"}`}>
+                    <span className="font-semibold text-white/95 mr-1.5">{msg.isMine ? "You" : msg.senderName}</span>
                     <span className="text-white/90">{msg.content}</span>
                   </div>
                 </div>
@@ -991,21 +812,13 @@ export default function CallModal({
         </div>
       )}
 
-      {/* ── Bottom controls (WhatsApp & Instagram style) ──────────────────── */}
+      {/* ── Bottom Controls ───────────────────────────────────────────────── */}
       <div
-        className={`absolute bottom-0 inset-x-0 z-30 flex flex-col items-center pb-8 sm:pb-10 px-4 transition-opacity duration-300 ${
-          showUI || callType === "audio" || isInputFocused || status !== "connected"
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
-        }`}
+        className={`absolute bottom-0 inset-x-0 z-30 flex flex-col items-center pb-8 sm:pb-10 px-4 transition-opacity duration-300 ${showUI || callType === "audio" || isInputFocused || status !== "connected" ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
       >
-        {/* Send Love button when Live Chat is hidden or during audio calls */}
         {(!showLiveChat || status !== "connected") && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              sendHeart();
-            }}
+            onClick={(e) => { e.stopPropagation(); sendHeart(); }}
             className="mb-4 flex items-center space-x-2 px-6 py-2.5 rounded-full bg-black/50 border border-white/25 backdrop-blur-xl text-white text-sm font-semibold active:scale-95 transition shadow-lg"
           >
             <Heart className="w-4 h-4 fill-pink-500 text-pink-500 animate-pulse" />
@@ -1013,13 +826,9 @@ export default function CallModal({
           </button>
         )}
 
-        {/* Instagram Live In-Call Comment Input & Quick Reactions Bar */}
         {showLiveChat && status === "connected" && (
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendLiveComment();
-            }}
+            onSubmit={(e) => { e.preventDefault(); sendLiveComment(); }}
             className="flex items-center space-x-1.5 sm:space-x-2 w-full max-w-sm mb-3 px-1"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1028,26 +837,17 @@ export default function CallModal({
                 type="text"
                 value={inCallText}
                 onChange={(e) => setInCallText(e.target.value)}
-                onFocus={() => {
-                  setIsInputFocused(true);
-                  setShowUI(true);
-                }}
+                onFocus={() => { setIsInputFocused(true); setShowUI(true); }}
                 onBlur={() => setIsInputFocused(false)}
                 placeholder={`Comment as ${myUsername}...`}
                 className="w-full bg-transparent text-white placeholder-white/50 text-xs sm:text-sm outline-none pr-1"
               />
               {inCallText.trim() && (
-                <button
-                  type="submit"
-                  className="ml-1 p-1 rounded-full bg-pink-500 hover:bg-pink-600 text-white transition active:scale-95 flex-shrink-0 shadow-md"
-                  title="Send comment"
-                >
+                <button type="submit" className="ml-1 p-1 rounded-full bg-pink-500 hover:bg-pink-600 text-white transition active:scale-95 flex-shrink-0 shadow-md">
                   <Send className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
-
-            {/* Quick emoji reaction chips (Instagram Live style) */}
             <div className="flex items-center space-x-1">
               {["❤️", "😂", "🔥", "💖", "💋"].map((emoji) => (
                 <button
@@ -1055,7 +855,6 @@ export default function CallModal({
                   type="button"
                   onClick={() => sendLiveComment(emoji)}
                   className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-xs sm:text-sm active:scale-90 transition hover:scale-110 shadow-sm"
-                  title={`Send ${emoji}`}
                 >
                   {emoji}
                 </button>
@@ -1064,58 +863,36 @@ export default function CallModal({
           </form>
         )}
 
-        {/* Control buttons bar (frosted glass pill) */}
         <div
           className="w-full max-w-sm flex items-center justify-around bg-black/55 backdrop-blur-2xl border border-white/15 rounded-full px-3.5 py-2.5 sm:px-5 sm:py-3 shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Mute microphone */}
           <button
             onClick={toggleMic}
-            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${
-              isMicMuted
-                ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white"
-                : "bg-white/20 text-white hover:bg-white/30"
-            }`}
-            title={isMicMuted ? "Unmute mic" : "Mute mic"}
+            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isMicMuted ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white" : "bg-white/20 text-white hover:bg-white/30"}`}
           >
             {isMicMuted ? <MicOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Mic className="w-5 h-5 sm:w-6 sm:h-6" />}
           </button>
 
-          {/* Video Toggle (video call) / Speaker toggle (audio call) */}
           {callType === "video" ? (
             <button
               onClick={toggleVideo}
-              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${
-                isVideoOff
-                  ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white"
-                  : "bg-white/20 text-white hover:bg-white/30"
-              }`}
-              title={isVideoOff ? "Turn video on" : "Turn video off"}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isVideoOff ? "bg-red-500/90 shadow-lg shadow-red-500/40 text-white" : "bg-white/20 text-white hover:bg-white/30"}`}
             >
               {isVideoOff ? <VideoOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Video className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
           ) : (
             <button
               onClick={toggleSpeaker}
-              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${
-                isSpeakerOff ? "bg-red-500 text-white" : "bg-white/20 text-white"
-              }`}
-              title={isSpeakerOff ? "Unmute speaker" : "Mute speaker"}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isSpeakerOff ? "bg-red-500 text-white" : "bg-white/20 text-white"}`}
             >
               {isSpeakerOff ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
           )}
 
-          {/* Toggle Live Chat Button (Instagram Live style) */}
           <button
             onClick={toggleLiveChat}
-            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${
-              showLiveChat
-                ? "bg-pink-500/85 text-white shadow-lg shadow-pink-500/35 border border-pink-400/40"
-                : "bg-white/20 text-white hover:bg-white/30"
-            }`}
-            title={showLiveChat ? "Hide Live Chat" : "Show Live Chat (Instagram Live)"}
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition active:scale-90 ${showLiveChat ? "bg-pink-500/85 text-white shadow-lg shadow-pink-500/35 border border-pink-400/40" : "bg-white/20 text-white hover:bg-white/30"}`}
           >
             <MessageCircle className="w-5 h-5 sm:w-6 sm:h-6" />
             {!showLiveChat && unreadChatCount > 0 && (
@@ -1125,22 +902,18 @@ export default function CallModal({
             )}
           </button>
 
-          {/* Flip camera */}
           {callType === "video" && (
             <button
               onClick={flipCamera}
               className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
-              title="Flip camera"
             >
               <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           )}
 
-          {/* End call — large WhatsApp/Instagram red button */}
           <button
             onClick={endCall}
             className="w-12 h-12 sm:w-13 sm:h-13 rounded-full bg-red-600 hover:bg-red-700 active:scale-90 text-white flex items-center justify-center transition shadow-2xl shadow-red-600/50"
-            title="End call"
           >
             <PhoneOff className="w-6 h-6 sm:w-7 sm:h-7" />
           </button>
