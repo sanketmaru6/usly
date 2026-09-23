@@ -1,17 +1,30 @@
 // High-Definition, Low-Latency WebRTC Configuration & Performance Optimizer
 import { EventEmitter } from "events";
 
-// Complete High-Speed ICE Configuration with Google STUN + Cloudflare STUN
+// Complete High-Speed ICE Configuration with Google STUN + Cloudflare STUN + OpenRelay TURN
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
+    // High-speed Google STUN servers
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
+    // Cloudflare STUN server
     { urls: "stun:stun.cloudflare.com:3478" },
+    // OpenRelay Global TURN Servers (Relays calls across mobile data, Symmetric NAT, and strict firewalls)
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp",
+      ],
+      username: "openrelay",
+      credential: "openrelay",
+    },
   ],
-  iceCandidatePoolSize: 0,
+  iceCandidatePoolSize: 10,
   bundlePolicy: "max-bundle",
   rtcpMuxPolicy: "require",
   iceTransportPolicy: "all",

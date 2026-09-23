@@ -186,7 +186,8 @@ export async function POST(req: NextRequest) {
                 {
                   $push: { [updateField]: candidate },
                   $set: { updatedAt: new Date() },
-                }
+                },
+                { upsert: true }
               ).catch((e: any) => console.error("candidate DB error:", e.message));
             }
           })

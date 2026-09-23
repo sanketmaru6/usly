@@ -106,7 +106,7 @@ export default function CallModal({
     if (remoteVideoRef.current && remoteVideoRef.current.paused) {
       remoteVideoRef.current.play().catch(() => {});
     }
-    if (callType === "audio" && remoteAudioRef.current && remoteAudioRef.current.paused) {
+    if (remoteAudioRef.current && remoteAudioRef.current.paused) {
       remoteAudioRef.current.play().catch(() => {});
     }
     if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
@@ -117,23 +117,25 @@ export default function CallModal({
     }
   };
 
-  // Safe candidate application with queuing
+  // Safe candidate application with queuing and robust format normalization
   const applyCandidate = async (cand: any) => {
     const pc = pcRef.current;
     if (!cand || !pc) return;
-    const key = typeof cand === "string" ? cand : JSON.stringify(cand);
+    const candObj = typeof cand === "string" ? { candidate: cand } : cand;
+    if (!candObj || !candObj.candidate) return;
+    const key = JSON.stringify(candObj);
     if (addedCandidates.current.has(key)) return;
 
     if (pc.remoteDescription && pc.remoteDescription.type) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(cand));
+        await pc.addIceCandidate(new RTCIceCandidate(candObj));
         addedCandidates.current.add(key);
       } catch (err) {
         console.warn("[WebRTC] addIceCandidate error:", err);
       }
     } else {
-      if (!candidateQueue.current.some((c) => (typeof c === "string" ? c : JSON.stringify(c)) === key)) {
-        candidateQueue.current.push(cand);
+      if (!candidateQueue.current.some((c) => JSON.stringify(typeof c === "string" ? { candidate: c } : c) === key)) {
+        candidateQueue.current.push(candObj);
       }
     }
   };
@@ -144,15 +146,43 @@ export default function CallModal({
     if (!pc || !pc.remoteDescription) return;
     while (candidateQueue.current.length > 0) {
       const c = candidateQueue.current.shift()!;
-      const key = typeof c === "string" ? c : JSON.stringify(c);
+      const candObj = typeof c === "string" ? { candidate: c } : c;
+      if (!candObj || !candObj.candidate) continue;
+      const key = JSON.stringify(candObj);
       if (!addedCandidates.current.has(key)) {
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(c));
+          await pc.addIceCandidate(new RTCIceCandidate(candObj));
           addedCandidates.current.add(key);
         } catch (err) {
           console.warn("[WebRTC] flush candidate error:", err);
         }
       }
+    }
+  };
+
+  // Active ICE restart recovery for network drops or symmetric NAT transitions
+  const triggerIceRestart = async () => {
+    const pc = pcRef.current;
+    if (!pc || !isCaller || pc.signalingState === "closed") return;
+    try {
+      console.log("[WebRTC] Triggering active ICE restart...");
+      if (typeof pc.restartIce === "function") {
+        pc.restartIce();
+      }
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      await fetch("/api/calls/signal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_offer",
+          callId,
+          offer: { type: "offer", sdp: offer.sdp },
+        }),
+        keepalive: true,
+      });
+    } catch (e) {
+      console.warn("[WebRTC] ICE restart failed:", e);
     }
   };
 
@@ -340,9 +370,9 @@ export default function CallModal({
         if (pc.connectionState === "connected") {
           applySenderBitrates(pc, callType === "video");
           setStatus("connected");
-        } else if (pc.connectionState === "failed") {
-          console.log("[WebRTC] Connection failed, restarting ICE...");
-          pc.restartIce?.();
+        } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+          console.log("[WebRTC] Connection failed, attempting ICE restart...");
+          triggerIceRestart();
         }
       };
 
@@ -353,7 +383,7 @@ export default function CallModal({
           applySenderBitrates(pc, callType === "video");
           setStatus("connected");
         } else if (pc.iceConnectionState === "failed") {
-          pc.restartIce?.();
+          triggerIceRestart();
         }
       };
 
@@ -726,6 +756,10 @@ export default function CallModal({
               remoteVideoRef.current?.play().catch(() => {});
             }}
             onPlay={() => {
+              setHasRemoteVideo(true);
+              setStatus("connected");
+            }}
+            onPlaying={() => {
               setHasRemoteVideo(true);
               setStatus("connected");
             }}
