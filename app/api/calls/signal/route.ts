@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { signalingStore } from "@/lib/signalingStore";
+import { signalingStore, signalingEmitter } from "@/lib/signalingStore";
 import { connectToDatabase } from "@/lib/db";
 import { CallSession } from "@/lib/models/CallSession";
 
@@ -91,10 +91,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, callId, call: newCallData });
     }
 
-    // 2. SET OR UPDATE OFFER (Guaranteed MongoDB persistence + instant in-memory update)
+    // 2. SET OR UPDATE OFFER (Guaranteed MongoDB persistence + instant SSE broadcast)
     if (action === "set_offer") {
       const { callId, offer } = body;
-      signalingStore.updateCall(callId, { offer });
+      // Update in-memory and broadcast SSE instantly to receiver
+      const updated = signalingStore.updateCall(callId, { offer });
+      // Also emit directly so receiver SSE fires immediately
+      if (updated) {
+        signalingEmitter.emit("call_update:" + callId, updated);
+      }
 
       try {
         const dbRes = await connectToDatabase();
@@ -174,17 +179,25 @@ export async function POST(req: NextRequest) {
     // 5. ADD ICE CANDIDATE
     if (action === "candidate") {
       const { callId, candidate, isCaller } = body;
+      // Add to in-memory store + emit SSE instantly
       signalingStore.addCandidate(callId, candidate, isCaller);
 
       if (candidate) {
+        // Persist to MongoDB asynchronously (don't block response)
         connectToDatabase()
           .then((dbRes) => {
             if (dbRes.isConnected) {
               const updateField = isCaller ? "callerCandidates" : "receiverCandidates";
+              // Limit to last 50 candidates to prevent unbounded array growth
               CallSession.findOneAndUpdate(
                 { callId },
                 {
-                  $push: { [updateField]: candidate },
+                  $push: {
+                    [updateField]: {
+                      $each: [candidate],
+                      $slice: -50,
+                    },
+                  },
                   $set: { updatedAt: new Date() },
                 },
                 { upsert: true }

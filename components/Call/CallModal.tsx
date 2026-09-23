@@ -143,6 +143,9 @@ export default function CallModal({
     const processed  = { offer: false, answer: false };
     const candQueue: RTCIceCandidateInit[] = [];
     const addedKeys  = new Set<string>();
+    // Buffer signals that arrive via SSE before pc is ready
+    const pendingSignals: any[] = [];
+    let pcReady = false;
 
     // ── Candidate helpers ────────────────────────────────────────────────────
     function normalizeCand(raw: any): RTCIceCandidateInit | null {
@@ -428,14 +431,26 @@ export default function CallModal({
         es.addEventListener("call_update", (e) => {
           try {
             const data = JSON.parse((e as MessageEvent).data);
-            if (pcRef.current) processSignal(pcRef.current, data);
+            if (pcRef.current && pcReady) {
+              processSignal(pcRef.current, data);
+            } else {
+              // Buffer signals that arrive before pc is ready
+              pendingSignals.push(data);
+            }
           } catch {}
         });
 
         es.addEventListener("candidate", (e) => {
           try {
             const d = JSON.parse((e as MessageEvent).data);
-            if (d.isCaller !== isCaller && pcRef.current) addCand(pcRef.current, d.candidate);
+            if (d.isCaller !== isCaller) {
+              if (pcRef.current && pcReady) {
+                addCand(pcRef.current, d.candidate);
+              } else {
+                // Queue as a synthetic signal with just the candidate
+                pendingSignals.push({ callerCandidates: isCaller ? [] : [d.candidate], receiverCandidates: isCaller ? [d.candidate] : [] });
+              }
+            }
           } catch {}
         });
 
@@ -474,6 +489,12 @@ export default function CallModal({
         };
       } catch {}
 
+      // Mark pc as ready and flush any buffered SSE signals
+      pcReady = true;
+      for (const sig of pendingSignals.splice(0)) {
+        await processSignal(pc, sig);
+      }
+
       // 9. Adaptive polling loop (fast until connected, slow after)
       const poll = async () => {
         if (!isMountedRef.current) return;
@@ -491,16 +512,12 @@ export default function CallModal({
           pcRef.current?.connectionState === "connected" ||
           pcRef.current?.iceConnectionState === "connected" ||
           pcRef.current?.iceConnectionState === "completed";
-        pollRef.current = setTimeout(poll, isConn ? 1500 : 120);
+        pollRef.current = setTimeout(poll, isConn ? 2000 : 100);
       };
-      pollRef.current = setTimeout(poll, 80);
+      pollRef.current = setTimeout(poll, 50); // Start polling immediately
 
-      // Audio call auto-ready
-      if (callType === "audio") {
-        setTimeout(() => {
-          if (isMountedRef.current && statusRef.current !== "error") setStatus("connected");
-        }, 2000);
-      }
+      // For audio calls: mark UI connected once ICE is actually up
+      // (connection state handler above handles it, no forced timeout needed)
     }
 
     start();

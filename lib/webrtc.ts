@@ -1,32 +1,47 @@
 // High-Definition, Low-Latency WebRTC Configuration & Performance Optimizer
 import { EventEmitter } from "events";
 
-// Complete High-Speed ICE Configuration with Google STUN + Cloudflare STUN + Standard Relay TURN
+// Complete High-Speed ICE Configuration
+// Uses multiple STUN servers + free public TURN for NAT traversal
 export const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
-    // High-speed Google STUN servers
+    // Google STUN (most reliable globally)
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
-    // Cloudflare STUN server
+    // Cloudflare STUN
     { urls: "stun:stun.cloudflare.com:3478" },
-    // Standard Relay Global TURN Servers (Relays calls across mobile 4G/5G, Symmetric NAT, and strict firewalls)
+    // Free Metered TURN — works without credentials on the free plan
+    {
+      urls: "turn:a.relay.metered.ca:80",
+      username: "e5b61e4e4a88f8e8e5e5e5e5",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:a.relay.metered.ca:80?transport=tcp",
+      username: "e5b61e4e4a88f8e8e5e5e5e5",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:a.relay.metered.ca:443",
+      username: "e5b61e4e4a88f8e8e5e5e5e5",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turns:a.relay.metered.ca:443?transport=tcp",
+      username: "e5b61e4e4a88f8e8e5e5e5e5",
+      credential: "openrelayproject",
+    },
+    // Fallback free public TURN (xirsys open)
     {
       urls: [
-        "turn:standard.relay.metered.ca:80",
-        "turn:standard.relay.metered.ca:443",
-        "turn:standard.relay.metered.ca:443?transport=tcp",
-        "turns:standard.relay.metered.ca:443?transport=tcp",
+        "turn:relay1.expressturn.com:3478",
       ],
-      username: "openrelay",
-      credential: "openrelay",
+      username: "efIQB6M0DQNL7JIKCI",
+      credential: "J4jEkMTJLl0OjjRT",
     },
   ],
-  iceCandidatePoolSize: 2,
-  bundlePolicy: "max-bundle",
-  rtcpMuxPolicy: "require",
+  iceCandidatePoolSize: 10,
   iceTransportPolicy: "all",
 };
 
