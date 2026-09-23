@@ -37,10 +37,22 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [selectedAvatar, setSelectedAvatar] = useState("https://api.dicebear.com/7.x/big-ears/svg?seed=Lily");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [gsiLoaded, setGsiLoaded] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  const QUICK_AVATARS = [
+    { name: "Bunny", url: "https://api.dicebear.com/7.x/big-ears/svg?seed=Lily" },
+    { name: "Sweetheart", url: "https://api.dicebear.com/7.x/big-ears/svg?seed=Chloe" },
+    { name: "Sakura", url: "https://api.dicebear.com/7.x/lorelei/svg?seed=Sakura" },
+    { name: "Haruto", url: "https://api.dicebear.com/7.x/lorelei/svg?seed=Haruto" },
+    { name: "Princess", url: "https://api.dicebear.com/7.x/adventurer/svg?seed=Princess" },
+    { name: "Prince", url: "https://api.dicebear.com/7.x/adventurer/svg?seed=Knight" },
+    { name: "Love Eyes", url: "https://api.dicebear.com/7.x/fun-emoji/svg?seed=Heart" },
+    { name: "Kitten", url: "https://api.dicebear.com/7.x/big-ears/svg?seed=Mimi" },
+  ];
 
   // Successful login handler
   const completeLogin = async (loginEmail: string, loginName: string, avatarUrl?: string) => {
@@ -51,7 +63,7 @@ export default function LoginPage() {
       const cleanEmail = loginEmail.toLowerCase().trim();
       const displayName = loginName.trim() || cleanEmail.split("@")[0];
       const cleanUsername = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "");
-      const userAvatar = avatarUrl || `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanUsername}`;
+      const userAvatar = avatarUrl || selectedAvatar || `https://api.dicebear.com/7.x/big-ears/svg?seed=${cleanUsername}`;
 
       const res = await signIn("demo-login", {
         redirect: false,
@@ -257,6 +269,43 @@ export default function LoginPage() {
 
         {/* 2. Email Login Form */}
         <form onSubmit={handleEmailFormSubmit} className="space-y-3.5 sm:space-y-4">
+          {/* Cute Avatar Selector */}
+          <div>
+            <label className="block text-[10px] sm:text-[11px] font-bold text-zinc-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+              <span>Choose Cute Avatar</span>
+              <span className="text-[10px] text-usly-pink font-semibold">Cute Styles 🌸</span>
+            </label>
+            <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
+              {QUICK_AVATARS.map((av) => {
+                const isSelected = selectedAvatar === av.url;
+                return (
+                  <button
+                    key={av.name}
+                    type="button"
+                    onClick={() => setSelectedAvatar(av.url)}
+                    className={`relative p-1 rounded-2xl border transition active:scale-95 flex-shrink-0 ${
+                      isSelected
+                        ? "bg-usly-pink/30 border-usly-pink ring-2 ring-usly-pink shadow-md shadow-usly-pink/30"
+                        : "bg-usly-surface border-white/10 hover:border-usly-pink/40"
+                    }`}
+                    title={av.name}
+                  >
+                    <img
+                      src={av.url}
+                      alt={av.name}
+                      className="w-10 h-10 rounded-full object-cover bg-usly-dark"
+                    />
+                    {isSelected && (
+                      <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-usly-pink flex items-center justify-center text-white text-[10px] font-bold shadow-sm">
+                        ✓
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div>
             <label className="block text-[10px] sm:text-[11px] font-bold text-zinc-300 uppercase tracking-wider mb-1">
               Your Display Name
