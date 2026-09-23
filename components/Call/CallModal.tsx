@@ -150,6 +150,7 @@ export default function CallModal({
     const addedKeys  = new Set<string>();
     // Buffer signals that arrive via SSE before pc is ready
     const pendingSignals: any[] = [];
+    let pendingRemoteAnswer: any = null;
     let pcReady = false;
 
     // ── Candidate helpers ────────────────────────────────────────────────────
@@ -236,6 +237,13 @@ export default function CallModal({
         return;
       }
 
+      // If receiver answered or accepted, transition caller out of "ringing" immediately
+      if (isCaller && (call.status === "accepted" || call.answer)) {
+        if (isMountedRef.current && statusRef.current === "ringing") {
+          setStatus("connecting");
+        }
+      }
+
       // Caller: receive answer
       if (isCaller && call.answer && !processed.answer) {
         if (pc.signalingState === "have-local-offer") {
@@ -250,6 +258,9 @@ export default function CallModal({
             console.error("[WebRTC] setRemoteDescription(answer) error:", e);
             processed.answer = false; // allow retry
           }
+        } else {
+          // Buffer answer if local offer is still being set
+          pendingRemoteAnswer = call.answer;
         }
       }
 
@@ -412,6 +423,21 @@ export default function CallModal({
           await pc.setLocalDescription(offer);
           const offerPayload = { type: "offer", sdp: offer.sdp };
           console.log("[WebRTC] Caller: sending offer via set_offer");
+
+          // Check if answer already arrived while offer was being created
+          if (pendingRemoteAnswer && !processed.answer && pc.signalingState === "have-local-offer") {
+            processed.answer = true;
+            try {
+              console.log("[WebRTC] Caller: applying buffered answer");
+              await pc.setRemoteDescription(new RTCSessionDescription(pendingRemoteAnswer));
+              await flushQueue(pc);
+              applySenderBitrates(pc, callType === "video");
+              if (isMountedRef.current) setStatus("connected");
+            } catch (e) {
+              console.error("[WebRTC] buffered answer error:", e);
+            }
+          }
+
           // Primary: set_offer (triggers SSE broadcast to receiver)
           await fetch("/api/calls/signal", {
             method: "POST",

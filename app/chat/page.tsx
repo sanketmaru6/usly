@@ -1267,22 +1267,31 @@ export default function ChatPage() {
   // Answer incoming call
   const handleAcceptCall = () => {
     if (!incomingCall) return;
+    const currentIncoming = incomingCall;
     ringingCallIdRef.current = null;
     notificationService.stopRingtone();
     setActiveToast(null);
 
+    // Notify backend immediately that receiver accepted
+    fetch("/api/calls/signal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "answer", callId: currentIncoming.callId }),
+      keepalive: true,
+    }).catch(() => {});
+
     const matchedContact = contacts.find(
-      (c) => c.username.toLowerCase() === incomingCall.callerUsername.toLowerCase()
+      (c) => c.username.toLowerCase() === currentIncoming.callerUsername.toLowerCase()
     );
     const partnerName =
-      incomingCall.callerName || matchedContact?.name || incomingCall.callerUsername;
+      currentIncoming.callerName || matchedContact?.name || currentIncoming.callerUsername;
     const partnerAvatar =
-      incomingCall.callerAvatar ||
+      currentIncoming.callerAvatar ||
       matchedContact?.avatar ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${incomingCall.callerUsername}`;
+      `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentIncoming.callerUsername}`;
 
     const callerContact: UserContact = {
-      username: incomingCall.callerUsername,
+      username: currentIncoming.callerUsername,
       name: partnerName,
       avatar: partnerAvatar,
       status: "online" as const,
@@ -1290,11 +1299,11 @@ export default function ChatPage() {
 
     handleSelectContact(callerContact);
     setActiveCall({
-      callId: incomingCall.callId,
+      callId: currentIncoming.callId,
       isCaller: false,
-      type: incomingCall.type,
+      type: currentIncoming.type,
       partnerName,
-      partnerUsername: incomingCall.callerUsername,
+      partnerUsername: currentIncoming.callerUsername,
       partnerAvatar,
     });
     setIncomingCall(null);
