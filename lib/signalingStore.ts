@@ -151,8 +151,16 @@ export const signalingStore = {
     return req;
   },
 
-  acceptRequest(requestId: string) {
-    const req = global.liveRequests.find((r) => r.id === requestId);
+  acceptRequest(requestId?: string, senderUsername?: string, receiverUsername?: string) {
+    const sU = senderUsername?.toLowerCase().trim();
+    const rU = receiverUsername?.toLowerCase().trim();
+    const req = global.liveRequests.find((r) =>
+      (requestId && r.id === requestId) ||
+      (sU && rU && (
+        (r.senderUsername === sU && r.receiverUsername === rU) ||
+        (r.senderUsername === rU && r.receiverUsername === sU)
+      ))
+    );
     if (req) {
       req.status = "accepted";
       signalingEmitter.emit("request_update:" + req.senderUsername, req);
@@ -162,8 +170,16 @@ export const signalingStore = {
     return null;
   },
 
-  declineRequest(requestId: string) {
-    const req = global.liveRequests.find((r) => r.id === requestId);
+  declineRequest(requestId?: string, senderUsername?: string, receiverUsername?: string) {
+    const sU = senderUsername?.toLowerCase().trim();
+    const rU = receiverUsername?.toLowerCase().trim();
+    const req = global.liveRequests.find((r) =>
+      (requestId && r.id === requestId) ||
+      (sU && rU && (
+        (r.senderUsername === sU && r.receiverUsername === rU) ||
+        (r.senderUsername === rU && r.receiverUsername === sU)
+      ))
+    );
     if (req) {
       req.status = "declined";
       signalingEmitter.emit("request_update:" + req.senderUsername, req);

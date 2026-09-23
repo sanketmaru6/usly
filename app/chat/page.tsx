@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import {
@@ -48,6 +48,7 @@ interface IncomingRequest {
   senderName: string;
   senderAvatar: string;
   createdAt: string;
+  status?: string;
 }
 const LOVE_KEYWORDS = [
   "love you",
@@ -133,6 +134,32 @@ export default function ChatPage() {
   const [activeTab, setActiveTab] = useState<"messages" | "calls" | "requests" | "search">("messages");
   const [contacts, setContacts] = useState<UserContact[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
+
+  // Stable comparator for incoming requests to prevent 1-second interval re-renders / blinking
+  const updateIncomingRequestsIfChanged = useCallback((newList: IncomingRequest[]) => {
+    if (!Array.isArray(newList)) return;
+    setIncomingRequests((prev) => {
+      if (
+        prev.length === newList.length &&
+        prev.every(
+          (p, idx) =>
+            p.id === newList[idx].id &&
+            p.status === newList[idx].status &&
+            p.senderUsername.toLowerCase() === newList[idx].senderUsername.toLowerCase()
+        )
+      ) {
+        return prev; // EXACT SAME LIST - NO STATE UPDATE, ZERO BLINKING!
+      }
+      if (currentUserRef.current) {
+        localStorage.setItem(
+          `usly_incoming_requests_${currentUserRef.current.username.toLowerCase()}`,
+          JSON.stringify(newList)
+        );
+      }
+      return newList;
+    });
+  }, []);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<UserContact[]>([]);
   const [sentRequestUsernames, setSentRequestUsernames] = useState<string[]>([]);
@@ -391,6 +418,17 @@ export default function ChatPage() {
         }
       })
       .catch(() => {});
+
+    // Load cached incoming requests immediately to prevent flash/delay
+    try {
+      const cachedReqs = localStorage.getItem(`usly_incoming_requests_${cleanUsername}`);
+      if (cachedReqs) {
+        const parsed = JSON.parse(cachedReqs);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setIncomingRequests(parsed);
+        }
+      }
+    } catch {}
 
     // Instant fetch all active/registered users for discovery
     fetch(`/api/users/search?currentUsername=${cleanUsername}`)
@@ -765,7 +803,7 @@ export default function ChatPage() {
           fetch(`/api/requests?username=${currentUser.username.toLowerCase()}`)
             .then((r) => r.json())
             .then((data) => {
-              if (data.incomingPending) setIncomingRequests(data.incomingPending);
+              if (data.incomingPending) updateIncomingRequestsIfChanged(data.incomingPending);
             })
             .catch(() => {});
           refreshConversations();
@@ -786,7 +824,9 @@ export default function ChatPage() {
         const reqRes = await fetch(`/api/requests?username=${currentUser.username.toLowerCase()}`);
         if (reqRes.ok) {
           const reqData = await reqRes.json();
-          setIncomingRequests(reqData.incomingPending || []);
+          if (Array.isArray(reqData.incomingPending)) {
+            updateIncomingRequestsIfChanged(reqData.incomingPending);
+          }
         }
 
         // 2. Fetch Messages for active selected chat
@@ -863,22 +903,24 @@ export default function ChatPage() {
     };
   }, [currentUser?.username]);
 
-  // Search users directory
+  // Search users directory (refreshes automatically on tab switch or query change)
   useEffect(() => {
     if (!currentUser) return;
     const fetchSearch = async () => {
       try {
-        const res = await fetch(`/api/users/search?q=${searchQuery}&currentUsername=${currentUser.username}`);
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}&currentUsername=${encodeURIComponent(currentUser.username)}`);
         if (res.ok) {
           const data = await res.json();
-          setSearchResults(data.users || []);
+          if (Array.isArray(data.users)) {
+            setSearchResults(data.users);
+          }
         }
       } catch (e) {
         console.error(e);
       }
     };
     fetchSearch();
-  }, [searchQuery, currentUser?.username]);
+  }, [searchQuery, currentUser?.username, activeTab]);
 
   // Send connection request
   const handleSendRequest = async (targetUser: UserContact) => {
@@ -912,16 +954,19 @@ export default function ChatPage() {
   // Accept incoming connection request
   const handleAcceptRequest = async (req: IncomingRequest) => {
     try {
-      await fetch("/api/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "accept",
-          requestId: req.id,
-        }),
+      setIncomingRequests((prev) => {
+        const next = prev.filter(
+          (r) => r.id !== req.id && r.senderUsername.toLowerCase() !== req.senderUsername.toLowerCase()
+        );
+        if (currentUser) {
+          localStorage.setItem(
+            `usly_incoming_requests_${currentUser.username.toLowerCase()}`,
+            JSON.stringify(next)
+          );
+        }
+        return next;
       });
 
-      setIncomingRequests((prev) => prev.filter((r) => r.id !== req.id));
       const newContact: UserContact = {
         username: req.senderUsername,
         name: req.senderName,
@@ -930,27 +975,55 @@ export default function ChatPage() {
         mood: "Just connected! 🎉",
         lastMessage: "Connected! Click to chat ✨",
       };
-      setContacts((prev) => [newContact, ...prev.filter((c) => c.username.toLowerCase() !== req.senderUsername.toLowerCase())]);
+      setContacts((prev) => [
+        newContact,
+        ...prev.filter((c) => c.username.toLowerCase() !== req.senderUsername.toLowerCase()),
+      ]);
       handleSelectContact(newContact);
       soundFX.playLovePing();
       setTriggerHeart(Date.now());
+
+      await fetch("/api/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "accept",
+          requestId: req.id,
+          senderUsername: req.senderUsername,
+          receiverUsername: currentUser?.username,
+        }),
+      });
     } catch (e) {
       console.error(e);
     }
   };
 
   // Decline incoming connection request
-  const handleDeclineRequest = async (reqId: string) => {
+  const handleDeclineRequest = async (req: IncomingRequest) => {
     try {
+      setIncomingRequests((prev) => {
+        const next = prev.filter(
+          (r) => r.id !== req.id && r.senderUsername.toLowerCase() !== req.senderUsername.toLowerCase()
+        );
+        if (currentUser) {
+          localStorage.setItem(
+            `usly_incoming_requests_${currentUser.username.toLowerCase()}`,
+            JSON.stringify(next)
+          );
+        }
+        return next;
+      });
+
       await fetch("/api/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "decline",
-          requestId: reqId,
+          requestId: req.id,
+          senderUsername: req.senderUsername,
+          receiverUsername: currentUser?.username,
         }),
       });
-      setIncomingRequests((prev) => prev.filter((r) => r.id !== reqId));
     } catch (e) {
       console.error(e);
     }
@@ -1615,7 +1688,7 @@ export default function ChatPage() {
                         <span>Accept & Chat</span>
                       </button>
                       <button
-                        onClick={() => handleDeclineRequest(req.id)}
+                        onClick={() => handleDeclineRequest(req)}
                         className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 transition active:scale-95"
                         title="Decline"
                       >
@@ -1648,8 +1721,16 @@ export default function ChatPage() {
                 </div>
 
                 {searchResults.length === 0 ? (
-                  <div className="text-center py-8 text-xs text-zinc-400">
-                    No users found matching "{searchQuery}"
+                  <div className="text-center py-8 text-xs text-zinc-400 space-y-1">
+                    <p className="text-lg">👥</p>
+                    <p>
+                      {searchQuery
+                        ? `No users found matching "${searchQuery}"`
+                        : "No other registered users yet."}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      Invite a friend or open a second window to connect!
+                    </p>
                   </div>
                 ) : (
                   searchResults

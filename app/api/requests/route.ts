@@ -15,59 +15,105 @@ export async function GET(req: NextRequest) {
 
   const memoryData = signalingStore.getRequestsForUser(username);
 
+  const incomingMap = new Map<string, any>();
+  const outgoingMap = new Map<string, any>();
+  const acceptedMap = new Map<string, any>();
+
+  // 1. Seed with in-memory requests
+  for (const r of memoryData.incomingPending) {
+    const key = r.senderUsername.toLowerCase() + "_" + r.receiverUsername.toLowerCase();
+    incomingMap.set(key, r);
+  }
+  for (const r of memoryData.outgoingPending) {
+    const key = r.senderUsername.toLowerCase() + "_" + r.receiverUsername.toLowerCase();
+    outgoingMap.set(key, r);
+  }
+  for (const r of memoryData.acceptedConnections) {
+    const pairKey = [r.senderUsername.toLowerCase(), r.receiverUsername.toLowerCase()].sort().join("_");
+    acceptedMap.set(pairKey, r);
+  }
+
+  // 2. Fetch and merge from MongoDB with case-insensitive matching
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
+      const userRegex = new RegExp(`^${username}$`, "i");
+
       const dbIncoming = await FriendRequest.find({
-        receiverUsername: username,
+        receiverUsername: userRegex,
         status: "pending",
-      });
+      }).sort({ createdAt: -1 });
 
       const dbOutgoing = await FriendRequest.find({
-        senderUsername: username,
+        senderUsername: userRegex,
         status: "pending",
-      });
+      }).sort({ createdAt: -1 });
 
       const dbAccepted = await FriendRequest.find({
-        $or: [{ receiverUsername: username }, { senderUsername: username }],
+        $or: [{ receiverUsername: userRegex }, { senderUsername: userRegex }],
         status: "accepted",
-      });
+      }).sort({ updatedAt: -1 });
 
-      return NextResponse.json({
-        incomingPending: dbIncoming.map((r) => ({
+      for (const r of dbIncoming) {
+        const item = {
           id: r._id.toString(),
           senderUsername: r.senderUsername,
-          senderName: r.senderName,
-          senderAvatar: r.senderAvatar,
+          senderName: r.senderName || r.senderUsername,
+          senderAvatar: r.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderUsername}`,
           receiverUsername: r.receiverUsername,
           status: r.status,
           createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
-        })),
-        outgoingPending: dbOutgoing.map((r) => ({
+        };
+        const key = r.senderUsername.toLowerCase() + "_" + r.receiverUsername.toLowerCase();
+        incomingMap.set(key, item);
+      }
+
+      for (const r of dbOutgoing) {
+        const item = {
           id: r._id.toString(),
           senderUsername: r.senderUsername,
-          senderName: r.senderName,
-          senderAvatar: r.senderAvatar,
+          senderName: r.senderName || r.senderUsername,
+          senderAvatar: r.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderUsername}`,
           receiverUsername: r.receiverUsername,
           status: r.status,
           createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
-        })),
-        acceptedConnections: dbAccepted.map((r) => ({
+        };
+        const key = r.senderUsername.toLowerCase() + "_" + r.receiverUsername.toLowerCase();
+        outgoingMap.set(key, item);
+      }
+
+      for (const r of dbAccepted) {
+        const item = {
           id: r._id.toString(),
           senderUsername: r.senderUsername,
-          senderName: r.senderName,
-          senderAvatar: r.senderAvatar,
+          senderName: r.senderName || r.senderUsername,
+          senderAvatar: r.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderUsername}`,
           receiverUsername: r.receiverUsername,
           status: r.status,
           createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
-        })),
-      });
+        };
+        const pairKey = [r.senderUsername.toLowerCase(), r.receiverUsername.toLowerCase()].sort().join("_");
+        acceptedMap.set(pairKey, item);
+      }
     }
   } catch (err: any) {
     console.error("Requests GET error:", err.message);
   }
 
-  return NextResponse.json(memoryData);
+  // Filter out any pending that have already been accepted
+  const finalIncoming: any[] = [];
+  for (const [key, r] of incomingMap.entries()) {
+    const pairKey = [r.senderUsername.toLowerCase(), r.receiverUsername.toLowerCase()].sort().join("_");
+    if (!acceptedMap.has(pairKey)) {
+      finalIncoming.push(r);
+    }
+  }
+
+  return NextResponse.json({
+    incomingPending: finalIncoming,
+    outgoingPending: Array.from(outgoingMap.values()),
+    acceptedConnections: Array.from(acceptedMap.values()),
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -97,8 +143,8 @@ export async function POST(req: NextRequest) {
           const saved = await FriendRequest.findOneAndUpdate(
             {
               $or: [
-                { senderUsername: sUname, receiverUsername: rUname },
-                { senderUsername: rUname, receiverUsername: sUname },
+                { senderUsername: new RegExp(`^${sUname}$`, "i"), receiverUsername: new RegExp(`^${rUname}$`, "i") },
+                { senderUsername: new RegExp(`^${rUname}$`, "i"), receiverUsername: new RegExp(`^${sUname}$`, "i") },
               ],
             },
             {
@@ -127,23 +173,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "RequestId or users required" }, { status: 400 });
       }
 
-      const accepted = requestId ? signalingStore.acceptRequest(requestId) : null;
+      const accepted = signalingStore.acceptRequest(requestId, senderUsername, receiverUsername);
 
       try {
         const dbRes = await connectToDatabase();
         if (dbRes.isConnected) {
+          const conditions: any[] = [];
           if (requestId && requestId.length === 24) {
-            await FriendRequest.findByIdAndUpdate(requestId, { status: "accepted" });
-          } else if (senderUsername && receiverUsername) {
-            await FriendRequest.findOneAndUpdate(
-              {
-                $or: [
-                  { senderUsername: senderUsername.toLowerCase(), receiverUsername: receiverUsername.toLowerCase() },
-                  { senderUsername: receiverUsername.toLowerCase(), receiverUsername: senderUsername.toLowerCase() },
-                ],
-              },
-              { status: "accepted" }
-            );
+            conditions.push({ _id: requestId });
+          }
+          if (senderUsername && receiverUsername) {
+            const sU = senderUsername.toLowerCase().trim();
+            const rU = receiverUsername.toLowerCase().trim();
+            conditions.push({ senderUsername: new RegExp(`^${sU}$`, "i"), receiverUsername: new RegExp(`^${rU}$`, "i") });
+            conditions.push({ senderUsername: new RegExp(`^${rU}$`, "i"), receiverUsername: new RegExp(`^${sU}$`, "i") });
+          }
+          if (conditions.length > 0) {
+            await FriendRequest.updateMany({ $or: conditions }, { status: "accepted" });
           }
         }
       } catch (e: any) {
@@ -159,23 +205,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "RequestId or users required" }, { status: 400 });
       }
 
-      const declined = requestId ? signalingStore.declineRequest(requestId) : null;
+      const declined = signalingStore.declineRequest(requestId, senderUsername, receiverUsername);
 
       try {
         const dbRes = await connectToDatabase();
         if (dbRes.isConnected) {
+          const conditions: any[] = [];
           if (requestId && requestId.length === 24) {
-            await FriendRequest.findByIdAndUpdate(requestId, { status: "declined" });
-          } else if (senderUsername && receiverUsername) {
-            await FriendRequest.findOneAndUpdate(
-              {
-                $or: [
-                  { senderUsername: senderUsername.toLowerCase(), receiverUsername: receiverUsername.toLowerCase() },
-                  { senderUsername: receiverUsername.toLowerCase(), receiverUsername: senderUsername.toLowerCase() },
-                ],
-              },
-              { status: "declined" }
-            );
+            conditions.push({ _id: requestId });
+          }
+          if (senderUsername && receiverUsername) {
+            const sU = senderUsername.toLowerCase().trim();
+            const rU = receiverUsername.toLowerCase().trim();
+            conditions.push({ senderUsername: new RegExp(`^${sU}$`, "i"), receiverUsername: new RegExp(`^${rU}$`, "i") });
+            conditions.push({ senderUsername: new RegExp(`^${rU}$`, "i"), receiverUsername: new RegExp(`^${sU}$`, "i") });
+          }
+          if (conditions.length > 0) {
+            await FriendRequest.updateMany({ $or: conditions }, { status: "declined" });
           }
         }
       } catch (e: any) {
