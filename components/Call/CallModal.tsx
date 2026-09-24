@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff,
   Heart, SwitchCamera, Volume2, VolumeX,
-  MessageCircle, Send, Lock, Maximize2, Minimize2, Sparkles,
+  MessageCircle, Send, Lock, Maximize2, Minimize2, Sparkles, Minimize,
 } from "lucide-react";
 import { ICE_SERVERS, soundFX, getUserMediaStream, applySenderBitrates } from "@/lib/webrtc";
 import { notificationService } from "@/lib/notifications";
@@ -75,9 +75,16 @@ export default function CallModal({
   const [floatingReactions, setFloatingReactions] = useState<{ id: string; emoji: string; left: number }[]>([]);
   const lastTapRef                              = useRef<number>(0);
 
+  // ── Floating PiP minimize state (Instagram-style) ─────────────────────────
+  const [isMinimized, setIsMinimized]           = useState(false);
+  // Draggable pip position
+  const [pipPos, setPipPos]                     = useState({ x: 16, y: 80 });
+  const pipDragRef                              = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
+
   // DOM refs
   const localVideoRef  = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pipVideoRef    = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const commentsEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -794,7 +801,7 @@ export default function CallModal({
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
   const avatar = partnerAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUsername}`;
 
-  // Compute PiP placement styles
+  // Compute self-PiP placement styles (inside full-screen call)
   const pipStyles: Record<string, string> = {
     "top-right": "top-16 right-4 sm:top-20 sm:right-6",
     "top-left": "top-16 left-4 sm:top-20 sm:left-6",
@@ -802,11 +809,163 @@ export default function CallModal({
     "bottom-left": "bottom-36 left-4 sm:bottom-40 left-6",
   };
 
+  // ── Draggable floating bubble handlers ───────────────────────────────────
+  const onPipPointerDown = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pipDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPosX: pipPos.x,
+      startPosY: pipPos.y,
+    };
+  }, [pipPos]);
+
+  const onPipPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!pipDragRef.current) return;
+    const dx = e.clientX - pipDragRef.current.startX;
+    const dy = e.clientY - pipDragRef.current.startY;
+    const maxX = window.innerWidth - 130;
+    const maxY = window.innerHeight - 200;
+    setPipPos({
+      x: Math.max(8, Math.min(maxX, pipDragRef.current.startPosX + dx)),
+      y: Math.max(8, Math.min(maxY, pipDragRef.current.startPosY + dy)),
+    });
+  }, []);
+
+  const onPipPointerUp = useCallback((e: React.PointerEvent) => {
+    pipDragRef.current = null;
+  }, []);
+
+  // Keep pip video in sync with remote stream when minimized
+  useEffect(() => {
+    if (!isMinimized || !pipVideoRef.current) return;
+    const stream = remoteStreamRef.current || localStreamRef.current;
+    if (stream && pipVideoRef.current.srcObject !== stream) {
+      pipVideoRef.current.srcObject = stream;
+      pipVideoRef.current.play().catch(() => {});
+    }
+  }, [isMinimized, hasRemoteVideo]);
+
+  // When minimizing, snap pip to safe start position
+  const handleMinimize = () => {
+    setPipPos({ x: window.innerWidth - 146, y: 80 });
+    setIsMinimized(true);
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
+    <>
+    {/* ══════════════════════════════════════════════════════════════════════
+        MINIMIZED: Instagram-style draggable floating PiP bubble
+    ══════════════════════════════════════════════════════════════════════ */}
+    {isMinimized && (
+      <div
+        className="fixed z-[9900] select-none touch-none"
+        style={{ left: pipPos.x, top: pipPos.y, width: 122, cursor: "grab" }}
+        onPointerDown={onPipPointerDown}
+        onPointerMove={onPipPointerMove}
+        onPointerUp={onPipPointerUp}
+      >
+        {/* Bubble container */}
+        <div
+          className="relative rounded-3xl overflow-hidden shadow-2xl border-2 border-white/20"
+          style={{ width: 122, height: 182 }}
+        >
+          {/* Remote video (or avatar if no video) */}
+          {callType === "video" && hasRemoteVideo ? (
+            <video
+              ref={pipVideoRef}
+              autoPlay
+              playsInline
+              muted={false}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
+              <img
+                src={avatar}
+                alt={partnerName}
+                className="w-14 h-14 rounded-full object-cover ring-2 ring-white/30"
+              />
+            </div>
+          )}
+
+          {/* Dark gradient overlays */}
+          <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
+          <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+
+          {/* Top: name + timer */}
+          <div className="absolute top-2 left-0 right-0 flex flex-col items-center pointer-events-none">
+            <span className="text-white text-[10px] font-black truncate px-1 drop-shadow-md">{partnerName}</span>
+            {status === "connected" && (
+              <span className="text-emerald-300 text-[9px] font-mono font-bold drop-shadow-md">{fmt(duration)}</span>
+            )}
+            {status !== "connected" && (
+              <span className="text-pink-300 text-[9px] font-bold animate-pulse drop-shadow-md">
+                {status === "ringing" ? "Ringing…" : "Connecting…"}
+              </span>
+            )}
+          </div>
+
+          {/* Expand button (top-right) */}
+          <button
+            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/90 transition active:scale-90 z-10"
+            onClick={(e) => { e.stopPropagation(); setIsMinimized(false); }}
+            title="Expand call"
+          >
+            <Maximize2 className="w-3 h-3" />
+          </button>
+
+          {/* Bottom quick controls */}
+          <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center space-x-2 px-2">
+            {/* Mic toggle */}
+            <button
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg ${
+                isMicMuted ? "bg-red-500" : "bg-white/20 backdrop-blur-md"
+              }`}
+              onClick={(e) => { e.stopPropagation(); toggleMic(); }}
+              title={isMicMuted ? "Unmute" : "Mute"}
+            >
+              {isMicMuted ? <MicOff className="w-3.5 h-3.5 text-white" /> : <Mic className="w-3.5 h-3.5 text-white" />}
+            </button>
+
+            {/* End call */}
+            <button
+              className="w-9 h-9 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition active:scale-90 shadow-xl"
+              onClick={(e) => { e.stopPropagation(); endCall(); }}
+              title="End Call"
+            >
+              <PhoneOff className="w-4 h-4 text-white" />
+            </button>
+
+            {/* Video toggle (video calls only) */}
+            {callType === "video" && (
+              <button
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg ${
+                  isVideoOff ? "bg-red-500" : "bg-white/20 backdrop-blur-md"
+                }`}
+                onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
+                title={isVideoOff ? "Turn on camera" : "Turn off camera"}
+              >
+                {isVideoOff ? <VideoOff className="w-3.5 h-3.5 text-white" /> : <Video className="w-3.5 h-3.5 text-white" />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Pulsing ring when ringing */}
+        {status === "ringing" && (
+          <div className="absolute inset-0 rounded-3xl border-2 border-pink-500/60 animate-ping pointer-events-none" />
+        )}
+      </div>
+    )}
+
+    {/* ══════════════════════════════════════════════════════════════════════
+        FULL SCREEN CALL (hidden but MOUNTED when minimized — keeps WebRTC alive)
+    ══════════════════════════════════════════════════════════════════════ */}
     <div
       className="fixed inset-0 z-[8000] bg-black flex flex-col select-none overflow-hidden"
-      style={{ height: "100dvh" }}
+      style={{ height: "100dvh", display: isMinimized ? "none" : undefined }}
       onClick={handleScreenClick}
     >
       {/* Hidden audio element – plays remote audio on all call types */}
@@ -992,6 +1151,15 @@ export default function CallModal({
               {isFitMode ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
             </button>
           )}
+
+          {/* ── Minimize to floating PiP (Instagram-style) ── */}
+          <button
+            onClick={(e) => { e.stopPropagation(); handleMinimize(); }}
+            title="Minimize — continue chatting"
+            className="p-2 rounded-full bg-white/15 hover:bg-white/30 backdrop-blur-md border border-white/20 text-white transition active:scale-95 shadow-lg flex items-center justify-center"
+          >
+            <Minimize className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -1185,5 +1353,6 @@ export default function CallModal({
         }
       `}</style>
     </div>
+    </>
   );
 }
