@@ -11,6 +11,7 @@ import {
   X,
   Download,
   Maximize2,
+  Smile,
 } from "lucide-react";
 import { getPingOptionFromContent } from "@/lib/lovePings";
 import { CHAT_THEMES, ChatThemeId, DEFAULT_THEME_ID } from "@/lib/themes";
@@ -53,6 +54,9 @@ export default function MessageList({
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Selected message for showing quick reactions on mobile
+  const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
 
   // Double tap to like heart animation tracker
   const [heartAnimMessageId, setHeartAnimMessageId] = useState<string | null>(null);
@@ -131,10 +135,12 @@ export default function MessageList({
       setHeartAnimMessageId(msgId);
       setTimeout(() => {
         setHeartAnimMessageId(null);
-      }, 900);
+      }, 800);
       lastTapRef.current = { id: "", time: 0 };
     } else {
       lastTapRef.current = { id: msgId, time: now };
+      // Toggle reaction bar on single tap for that specific message on mobile
+      setActiveReactionMsgId((prev) => (prev === msgId ? null : msgId));
     }
   };
 
@@ -180,7 +186,10 @@ export default function MessageList({
   };
 
   return (
-    <div className={`relative flex-1 flex flex-col min-h-0 overflow-hidden select-none sm:select-auto ${activeTheme.chatBg}`}>
+    <div
+      style={activeTheme.chatBgStyle}
+      className={`relative flex-1 flex flex-col min-h-0 overflow-hidden select-none sm:select-auto ${activeTheme.chatBgClass}`}
+    >
       {/* Messages Scroll Container */}
       <div
         ref={containerRef}
@@ -214,8 +223,8 @@ export default function MessageList({
           const isGroupedWithPrev = isSameSenderAsPrev && timeDiffPrev < 2 * 60 * 1000 && !showDateDivider;
           const isLastInCluster = !isSameSenderAsNext;
 
-          // Instagram corner radius calculation
-          let bubbleRadius = isMe
+          // Instagram signature corner radii
+          const bubbleRadius = isMe
             ? isGroupedWithPrev
               ? "rounded-[18px] rounded-br-[6px]"
               : "rounded-[22px] rounded-br-[4px]"
@@ -223,12 +232,14 @@ export default function MessageList({
             ? "rounded-[18px] rounded-bl-[6px]"
             : "rounded-[22px] rounded-bl-[4px]";
 
+          const isReactionMenuOpen = activeReactionMsgId === msg.id;
+
           return (
             <React.Fragment key={msg.id || `msg_${index}`}>
-              {/* Instagram Date Header */}
+              {/* Instagram Floating Date Header */}
               {showDateDivider && dateLabel && (
                 <div className="flex justify-center my-4 sticky top-1 z-10">
-                  <span className="px-3 py-1 rounded-full bg-[#1e1e1e]/90 border border-white/10 text-[10px] sm:text-[11px] font-semibold text-zinc-300 shadow-md backdrop-blur-md">
+                  <span className="px-3.5 py-1 rounded-full bg-zinc-900/90 border border-white/10 text-[10px] sm:text-[11px] font-semibold text-zinc-300 shadow-md backdrop-blur-md">
                     {dateLabel}
                   </span>
                 </div>
@@ -264,24 +275,25 @@ export default function MessageList({
               {/* 2. IMAGE / PHOTO MESSAGE TYPE */}
               {msg.type === "image" && (
                 <div className={`flex ${isMe ? "justify-end" : "justify-start items-end"} ${isGroupedWithPrev ? "mt-1" : "mt-2.5"}`}>
-                  {/* Partner Avatar Thumbnail beside last message in cluster */}
+                  {/* Partner Avatar beside last message in cluster */}
                   {!isMe && (
                     <div className="w-7 h-7 rounded-full flex-shrink-0 mr-2 mb-0.5 overflow-hidden">
-                      {isLastInCluster && (
+                      {isLastInCluster ? (
                         <img
                           src={partnerAvatar || msg.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerName}`}
                           alt={partnerName}
                           className="w-full h-full object-cover rounded-full"
                         />
+                      ) : (
+                        <div className="w-7 h-7" />
                       )}
                     </div>
                   )}
 
                   <div className="flex flex-col max-w-[78%] sm:max-w-sm">
                     <div
-                      className={`relative p-1 overflow-hidden transition-all shadow-lg ${bubbleRadius} ${
-                        isMe ? activeTheme.sentBubble : activeTheme.partnerBubble
-                      }`}
+                      style={isMe ? activeTheme.sentStyle : activeTheme.partnerStyle}
+                      className={`relative p-1 overflow-hidden transition-all shadow-lg ${bubbleRadius}`}
                       onClick={() => handleBubbleClick(msg.id)}
                     >
                       <div
@@ -329,17 +341,20 @@ export default function MessageList({
                       )}
                     </div>
 
-                    {/* Instagram Quick Reactions on hover/tap */}
-                    {onAddReaction && (
+                    {/* Instagram Reactions on tap / hover */}
+                    {onAddReaction && (isReactionMenuOpen) && (
                       <div
-                        className={`flex items-center space-x-1 mt-1 px-1 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
-                          isMe ? "justify-end" : "justify-start"
+                        className={`flex items-center space-x-1 mt-1 p-1 rounded-full bg-zinc-900/90 border border-white/10 shadow-lg animate-in fade-in zoom-in-95 duration-150 ${
+                          isMe ? "self-end" : "self-start"
                         }`}
                       >
-                        {INSTAGRAM_QUICK_EMOJIS.slice(0, 5).map((emoji) => (
+                        {INSTAGRAM_QUICK_EMOJIS.map((emoji) => (
                           <button
                             key={emoji}
-                            onClick={() => onAddReaction(msg.id, emoji)}
+                            onClick={() => {
+                              onAddReaction(msg.id, emoji);
+                              setActiveReactionMsgId(null);
+                            }}
                             className="text-xs hover:scale-125 transition-transform p-1 rounded-full hover:bg-white/10 active:scale-125"
                           >
                             {emoji}
@@ -356,12 +371,14 @@ export default function MessageList({
                 <div className={`flex ${isMe ? "justify-end" : "justify-start items-end"} ${isGroupedWithPrev ? "mt-0.5" : "mt-2"}`}>
                   {!isMe && (
                     <div className="w-7 h-7 rounded-full flex-shrink-0 mr-2 mb-0.5 overflow-hidden">
-                      {isLastInCluster && (
+                      {isLastInCluster ? (
                         <img
                           src={partnerAvatar || msg.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerName}`}
                           alt={partnerName}
                           className="w-full h-full object-cover rounded-full"
                         />
+                      ) : (
+                        <div className="w-7 h-7" />
                       )}
                     </div>
                   )}
@@ -382,20 +399,21 @@ export default function MessageList({
                 <div className={`flex ${isMe ? "justify-end" : "justify-start items-end"} ${isGroupedWithPrev ? "mt-1" : "mt-2.5"}`}>
                   {!isMe && (
                     <div className="w-7 h-7 rounded-full flex-shrink-0 mr-2 mb-0.5 overflow-hidden">
-                      {isLastInCluster && (
+                      {isLastInCluster ? (
                         <img
                           src={partnerAvatar || msg.senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerName}`}
                           alt={partnerName}
                           className="w-full h-full object-cover rounded-full"
                         />
+                      ) : (
+                        <div className="w-7 h-7" />
                       )}
                     </div>
                   )}
 
                   <div
-                    className={`max-w-[80%] sm:max-w-md p-3 shadow-md ${bubbleRadius} ${
-                      isMe ? activeTheme.sentBubble : activeTheme.partnerBubble
-                    }`}
+                    style={isMe ? activeTheme.sentStyle : activeTheme.partnerStyle}
+                    className={`max-w-[80%] sm:max-w-md p-3 shadow-md ${bubbleRadius}`}
                   >
                     <div className="flex items-center space-x-3">
                       <button
@@ -463,9 +481,8 @@ export default function MessageList({
                   <div className="flex flex-col max-w-[78%] sm:max-w-md relative">
                     <div
                       onClick={() => handleBubbleClick(msg.id)}
-                      className={`relative px-4 py-2 sm:py-2.5 text-[14px] leading-relaxed transition-all shadow-sm select-text cursor-pointer active:scale-[0.99] ${bubbleRadius} ${
-                        isMe ? activeTheme.sentBubble : activeTheme.partnerBubble
-                      }`}
+                      style={isMe ? activeTheme.sentStyle : activeTheme.partnerStyle}
+                      className={`relative px-4 py-2 sm:py-2.5 text-[14.5px] leading-relaxed select-text cursor-pointer active:scale-[0.99] transition-transform ${bubbleRadius}`}
                     >
                       {/* Text Content */}
                       <p className="whitespace-pre-wrap break-words">{contentStr}</p>
@@ -489,25 +506,31 @@ export default function MessageList({
                       )}
                     </div>
 
-                    {/* Instagram Seen / Timestamp on last message or hover */}
+                    {/* Instagram Seen / Timestamp on last message */}
                     {isLastInCluster && (
-                      <div className={`flex items-center space-x-1 mt-0.5 px-1 text-[10px] text-zinc-400 ${isMe ? "justify-end" : "justify-start"}`}>
+                      <div className={`flex items-center space-x-1.5 mt-0.5 px-1 text-[10px] text-zinc-400 ${isMe ? "justify-end" : "justify-start"}`}>
                         <span>{formatTime(msg.createdAt)}</span>
-                        {isMe && <span className="text-pink-400 font-medium text-[10px]">Seen</span>}
+                        {isMe && <span className="text-pink-400 font-semibold text-[10px]">Seen</span>}
                       </div>
                     )}
 
-                    {/* Quick Reactions Bar on Touch/Hover */}
+                    {/* Instagram Quick Reactions on Tap or Desktop Hover */}
                     {onAddReaction && (
                       <div
-                        className={`flex items-center space-x-1 mt-0.5 px-1 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
-                          isMe ? "justify-end" : "justify-start"
-                        }`}
+                        className={`flex items-center space-x-1 mt-1 p-1 rounded-full bg-zinc-900/95 border border-white/15 shadow-xl transition-all ${
+                          isReactionMenuOpen
+                            ? "flex"
+                            : "hidden sm:group-hover:flex"
+                        } ${isMe ? "self-end" : "self-start"}`}
                       >
                         {INSTAGRAM_QUICK_EMOJIS.map((emoji) => (
                           <button
                             key={emoji}
-                            onClick={() => onAddReaction(msg.id, emoji)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddReaction(msg.id, emoji);
+                              setActiveReactionMsgId(null);
+                            }}
                             className="text-xs hover:scale-125 transition-transform p-1 rounded-full hover:bg-white/10 active:scale-125"
                           >
                             {emoji}

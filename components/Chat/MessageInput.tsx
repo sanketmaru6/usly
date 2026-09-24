@@ -2,15 +2,11 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Send,
   Mic,
   Square,
   Smile,
   Sparkles,
   Heart,
-  Volume2,
-  VolumeX,
-  Check,
   Image as ImageIcon,
   Camera,
   X,
@@ -40,14 +36,6 @@ const LOVE_QUESTIONS = [
   "Describe our love in three words! 💖",
 ];
 
-const CHAT_SOUND_OPTIONS = [
-  { id: "chime", name: "Romantic Chime", icon: "🔔", desc: "Gentle chord (Default)" },
-  { id: "pop", name: "Bubble Pop", icon: "🫧", desc: "Soft subtle pop" },
-  { id: "crystal", name: "Sweet Crystal", icon: "✨", desc: "Sparkling bell chime" },
-  { id: "heartbeat", name: "Heartbeat", icon: "💖", desc: "Warm gentle pulse" },
-  { id: "silent", name: "Mute / Silent", icon: "🔕", desc: "No sound during chat" },
-];
-
 export default function MessageInput({
   onSendMessage,
   onSendLovePing,
@@ -58,8 +46,6 @@ export default function MessageInput({
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [showStickers, setShowStickers] = useState(false);
-  const [showSoundMenu, setShowSoundMenu] = useState(false);
-  const [selectedSound, setSelectedSound] = useState<string>("chime");
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
 
@@ -67,30 +53,8 @@ export default function MessageInput({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const soundMenuRef = useRef<HTMLDivElement | null>(null);
 
   const activeTheme = CHAT_THEMES[themeId] || CHAT_THEMES.sunset;
-
-  // Load persisted chat sound choice
-  useEffect(() => {
-    const saved = localStorage.getItem("usly_chat_sound") || "chime";
-    setSelectedSound(saved);
-  }, []);
-
-  // Close sound menu on click outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (soundMenuRef.current && !soundMenuRef.current.contains(e.target as Node)) {
-        setShowSoundMenu(false);
-      }
-    };
-    if (showSoundMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [showSoundMenu]);
 
   // Compress and convert image to lightweight Data URL (Max 1600px, 82% quality)
   const compressImage = (file: File): Promise<string> => {
@@ -156,7 +120,6 @@ export default function MessageInput({
     }
   };
 
-  // Support pasting image from clipboard (Ctrl+V)
   const handlePaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
@@ -179,15 +142,6 @@ export default function MessageInput({
     }
   };
 
-  const handleSelectSound = (soundId: string) => {
-    setSelectedSound(soundId);
-    localStorage.setItem("usly_chat_sound", soundId);
-    if (soundId !== "silent") {
-      soundFX.playChatSound(soundId);
-    }
-    setTimeout(() => setShowSoundMenu(false), 250);
-  };
-
   const handleSend = () => {
     if (selectedImage) {
       onSendMessage(selectedImage, "image");
@@ -198,7 +152,6 @@ export default function MessageInput({
       setText("");
     }
     setShowStickers(false);
-    setShowSoundMenu(false);
     if (onTyping) onTyping(false);
   };
 
@@ -278,7 +231,7 @@ export default function MessageInput({
   const hasContentToSend = Boolean(text.trim() || selectedImage);
 
   return (
-    <div className="relative p-2 sm:px-4 sm:py-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] bg-black/90 border-t border-white/10 flex-shrink-0">
+    <div className="relative px-2.5 sm:px-4 py-2 sm:py-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] bg-black/95 border-t border-white/10 flex-shrink-0 w-full overflow-hidden">
       {/* Hidden File Input for Image Upload */}
       <input
         type="file"
@@ -290,7 +243,7 @@ export default function MessageInput({
 
       {/* Selected Image Preview Drawer */}
       {selectedImage && (
-        <div className="absolute bottom-full left-2 right-2 mb-2 p-2.5 sm:p-3 rounded-2xl bg-[#1e1e1e] border border-white/15 backdrop-blur-2xl shadow-2xl flex items-center justify-between z-30 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="absolute bottom-full left-2 right-2 mb-2 p-2.5 rounded-2xl bg-[#1e1e1e] border border-white/15 backdrop-blur-2xl shadow-2xl flex items-center justify-between z-30 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <div className="flex items-center space-x-3 min-w-0">
             <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-white/20 shadow-md flex-shrink-0 bg-black">
               <img
@@ -317,18 +270,18 @@ export default function MessageInput({
             </button>
             <button
               onClick={handleSend}
-              className={`px-3.5 py-1.5 rounded-full ${activeTheme.sentBubble} text-xs font-bold shadow-md hover:opacity-95 transition active:scale-90 flex items-center space-x-1`}
+              style={activeTheme.sentStyle}
+              className="px-3.5 py-1.5 rounded-full text-xs font-bold shadow-md hover:opacity-95 transition active:scale-90 flex items-center space-x-1"
             >
-              <Send className="w-3.5 h-3.5" />
               <span>Send</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Sticker & Love Questions Popover */}
+      {/* Sticker Popover */}
       {showStickers && (
-        <div className="absolute bottom-full left-2 right-2 sm:left-4 sm:right-auto sm:w-80 mb-2 rounded-2xl p-3 sm:p-4 shadow-2xl border border-white/15 animate-in fade-in slide-in-from-bottom-2 duration-150 z-30 bg-[#1e1e1e] backdrop-blur-2xl">
+        <div className="absolute bottom-full left-2 right-2 sm:left-4 sm:right-auto sm:w-80 mb-2 rounded-2xl p-3 shadow-2xl border border-white/15 animate-in fade-in slide-in-from-bottom-2 duration-150 z-30 bg-[#1e1e1e] backdrop-blur-2xl">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider">
               Stickers
@@ -357,26 +310,26 @@ export default function MessageInput({
       )}
 
       {/* Instagram-style DM Input Bar */}
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-2 w-full max-w-full">
         {/* Instagram Left Blue Camera Button */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isProcessingImage}
-          className="w-10 h-10 rounded-full bg-[#0095F6] hover:bg-[#1877F2] text-white flex-shrink-0 flex items-center justify-center transition shadow-md active:scale-95"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#0095F6] hover:bg-[#1877F2] text-white flex-shrink-0 flex items-center justify-center transition shadow-md active:scale-95"
           title="Camera / Photo"
         >
           {isProcessingImage ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
+            <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
           ) : (
-            <Camera className="w-5 h-5" />
+            <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
           )}
         </button>
 
-        {/* Central Rounded-Full Capsule Pill */}
+        {/* Central Rounded Capsule Pill */}
         {isRecording ? (
-          <div className="flex-1 flex items-center justify-between px-4 py-2 rounded-full bg-red-950/40 border border-red-500/40 text-red-300 animate-pulse min-w-0">
-            <div className="flex items-center space-x-2 truncate">
+          <div className="flex-1 flex items-center justify-between px-3.5 py-1.5 sm:py-2 rounded-full bg-red-950/40 border border-red-500/40 text-red-300 animate-pulse min-w-0">
+            <div className="flex items-center space-x-1.5 truncate">
               <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping flex-shrink-0" />
               <span className="text-xs font-bold truncate">Recording ({recordSeconds}s)</span>
             </div>
@@ -389,7 +342,7 @@ export default function MessageInput({
             </button>
           </div>
         ) : (
-          <div className="flex-1 flex items-center rounded-full bg-[#262626] border border-white/10 px-3.5 sm:px-4 py-1.5 sm:py-2 transition focus-within:border-white/30">
+          <div className="flex-1 min-w-0 flex items-center rounded-full bg-[#262626] border border-white/10 px-3.5 py-1.5 sm:py-2 transition focus-within:border-white/30">
             <input
               type="text"
               value={text}
@@ -397,12 +350,12 @@ export default function MessageInput({
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={selectedImage ? "Caption..." : "Message..."}
-              className="flex-1 bg-transparent text-sm sm:text-[14.5px] text-white placeholder-zinc-400 focus:outline-none font-normal min-w-0"
+              className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-zinc-400 focus:outline-none font-normal"
             />
 
             {/* Action icons inside the pill when text is empty */}
             {!hasContentToSend && (
-              <div className="flex items-center space-x-1.5 sm:space-x-2 pl-2 flex-shrink-0 text-zinc-300">
+              <div className="flex items-center space-x-1.5 sm:space-x-2 pl-1.5 flex-shrink-0 text-zinc-300">
                 {/* Voice Note Button */}
                 <button
                   type="button"
@@ -410,7 +363,7 @@ export default function MessageInput({
                   className="p-1 hover:text-white transition active:scale-95"
                   title="Voice message"
                 >
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 </button>
 
                 {/* Photo Gallery Button */}
@@ -420,22 +373,19 @@ export default function MessageInput({
                   className="p-1 hover:text-white transition active:scale-95"
                   title="Gallery photo"
                 >
-                  <ImageIcon className="w-5 h-5" />
+                  <ImageIcon className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 </button>
 
                 {/* Stickers / Emojis Button */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowStickers(!showStickers);
-                    setShowSoundMenu(false);
-                  }}
+                  onClick={() => setShowStickers(!showStickers)}
                   className={`p-1 transition active:scale-95 ${
                     showStickers ? "text-pink-400" : "hover:text-white"
                   }`}
                   title="Stickers"
                 >
-                  <Smile className="w-5 h-5" />
+                  <Smile className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 </button>
 
                 {/* Love Ping Heart */}
@@ -445,73 +395,8 @@ export default function MessageInput({
                   className="p-1 text-pink-500 hover:text-pink-400 transition active:scale-95"
                   title="Send Love Ping"
                 >
-                  <Heart className="w-5 h-5 fill-pink-500 animate-heartbeat" />
+                  <Heart className="w-4 h-4 sm:w-4.5 sm:h-4.5 fill-pink-500 animate-heartbeat" />
                 </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Live Chat Sound Button */}
-        {!isRecording && !hasContentToSend && (
-          <div className="relative flex-shrink-0" ref={soundMenuRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setShowSoundMenu(!showSoundMenu);
-                setShowStickers(false);
-              }}
-              className={`w-9 h-9 rounded-full flex items-center justify-center transition active:scale-95 ${
-                selectedSound === "silent"
-                  ? "bg-red-500/15 text-red-400"
-                  : "bg-[#262626] hover:bg-[#333] text-zinc-300 hover:text-white"
-              }`}
-              title="Chat Sound Settings"
-            >
-              {selectedSound === "silent" ? (
-                <VolumeX className="w-4 h-4 text-red-400" />
-              ) : (
-                <Volume2 className="w-4 h-4" />
-              )}
-            </button>
-
-            {/* Chat Sound Popover */}
-            {showSoundMenu && (
-              <div className="absolute bottom-full right-0 mb-2.5 w-60 rounded-2xl p-3 shadow-2xl border border-white/15 animate-in fade-in slide-in-from-bottom-2 duration-150 z-40 bg-[#1e1e1e] backdrop-blur-2xl">
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
-                  <span className="text-[11px] font-bold text-white uppercase tracking-wider">
-                    🎵 Live Chat Sound
-                  </span>
-                  <span className="text-[10px] text-zinc-400">Preview</span>
-                </div>
-
-                <div className="space-y-1">
-                  {CHAT_SOUND_OPTIONS.map((opt) => {
-                    const isSelected = selectedSound === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => handleSelectSound(opt.id)}
-                        className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition active:scale-95 ${
-                          isSelected
-                            ? "bg-white/10 border border-white/20 text-white"
-                            : "hover:bg-white/5 border border-transparent text-zinc-300 hover:text-white"
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2.5 min-w-0">
-                          <span className="text-base flex-shrink-0">{opt.icon}</span>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold leading-tight truncate">{opt.name}</p>
-                            <p className="text-[10px] text-zinc-400 leading-tight truncate">{opt.desc}</p>
-                          </div>
-                        </div>
-                        {isSelected && (
-                          <Check className="w-3.5 h-3.5 text-pink-400 flex-shrink-0 ml-2" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
             )}
           </div>
@@ -522,7 +407,7 @@ export default function MessageInput({
           <button
             type="button"
             onClick={handleSend}
-            className="px-3.5 py-2 font-bold text-sm text-[#0095F6] hover:text-[#1877F2] active:scale-95 transition flex-shrink-0"
+            className="px-2 sm:px-3 py-1.5 font-bold text-sm text-[#0095F6] hover:text-[#1877F2] active:scale-95 transition flex-shrink-0"
             title="Send"
           >
             Send

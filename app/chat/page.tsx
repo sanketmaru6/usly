@@ -2122,7 +2122,10 @@ export default function ChatPage() {
         </aside>
 
         {/* RIGHT CHAT AREA */}
-        <section className={`flex-1 min-w-0 flex flex-col relative h-full overflow-hidden transition-colors duration-300 ${!selectedUser ? "hidden md:flex bg-usly-dark/80" : `flex ${CHAT_THEMES[currentThemeId]?.chatBg || "bg-[#0b0512]"}`}`}>
+        <section
+          style={selectedUser ? CHAT_THEMES[currentThemeId]?.chatBgStyle : undefined}
+          className={`flex-1 min-w-0 flex flex-col relative h-full overflow-hidden transition-colors duration-300 ${!selectedUser ? "hidden md:flex bg-usly-dark/80" : `flex ${CHAT_THEMES[currentThemeId]?.chatBg || "bg-[#0b0512]"}`}`}
+        >
           {selectedUser ? (
             <>
               {/* Header with Call Controls & Instagram Chat Themes */}
@@ -2167,7 +2170,7 @@ export default function ChatPage() {
                 </div>
 
                 {/* Instagram Call & Action Controls */}
-                <div className="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
+                <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
                   {/* Instagram Theme Switcher Button */}
                   <button
                     onClick={() => setIsThemeModalOpen(true)}
@@ -2176,15 +2179,6 @@ export default function ChatPage() {
                   >
                     <Palette className="w-4 h-4 text-pink-400" />
                     <span className="text-xs font-semibold hidden md:inline">Theme</span>
-                  </button>
-
-                  {/* Love Ping Button */}
-                  <button
-                    onClick={() => setIsPingModalOpen(true)}
-                    className="p-2 sm:p-2.5 rounded-full bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/30 text-pink-400 text-xs font-semibold shadow-sm transition active:scale-90 flex items-center justify-center"
-                    title="Send a Romantic Ping"
-                  >
-                    <Heart className="w-4 h-4 fill-pink-500 text-pink-400 animate-heartbeat" />
                   </button>
 
                   {/* Audio Call */}

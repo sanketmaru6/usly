@@ -30,8 +30,8 @@ export default function ThemePickerModal({
       >
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-white/10">
-          <div className="flex items-center space-x-2">
-            <span className="p-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white">
+          <div className="flex items-center space-x-2.5">
+            <span className="p-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-md">
               <Sparkles className="w-4 h-4" />
             </span>
             <div>
@@ -69,7 +69,7 @@ export default function ThemePickerModal({
                   <div className="flex items-center space-x-3.5">
                     {/* Theme Swatch Circle */}
                     <div
-                      className={`w-12 h-12 rounded-full bg-gradient-to-tr ${theme.previewGradient} flex items-center justify-center text-xl shadow-md flex-shrink-0`}
+                      className={`w-12 h-12 rounded-full bg-gradient-to-tr ${theme.previewGradient} flex items-center justify-center text-xl shadow-md flex-shrink-0 text-white`}
                     >
                       {theme.icon}
                     </div>
@@ -99,15 +99,17 @@ export default function ThemePickerModal({
                   </div>
                 </div>
 
-                {/* Sample Chat Bubbles Preview */}
+                {/* Sample Chat Bubbles Preview with explicit styles */}
                 <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-[11px] gap-2">
                   <div
-                    className={`px-3 py-1.5 rounded-[14px] rounded-bl-[2px] max-w-[48%] truncate ${theme.partnerBubble}`}
+                    style={theme.partnerStyle}
+                    className="px-3 py-1.5 rounded-[16px] rounded-bl-[4px] max-w-[48%] truncate font-medium"
                   >
                     Hey there! ✨
                   </div>
                   <div
-                    className={`px-3 py-1.5 rounded-[14px] rounded-br-[2px] max-w-[48%] truncate ${theme.sentBubble}`}
+                    style={theme.sentStyle}
+                    className="px-3 py-1.5 rounded-[16px] rounded-br-[4px] max-w-[48%] truncate font-medium text-white"
                   >
                     Love this look! 💖
                   </div>

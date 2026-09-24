@@ -1,3 +1,5 @@
+import React from "react";
+
 export type ChatThemeId = "sunset" | "cyber" | "rose";
 
 export interface ChatTheme {
@@ -6,13 +8,12 @@ export interface ChatTheme {
   icon: string;
   tagline: string;
   previewGradient: string;
-  chatBg: string;
-  sentBubble: string;
-  partnerBubble: string;
+  chatBgClass: string;
+  chatBg?: string;
   accentColor: string;
-  headerBorder: string;
-  inputBg: string;
-  ringColor: string;
+  sentStyle: React.CSSProperties;
+  partnerStyle: React.CSSProperties;
+  chatBgStyle: React.CSSProperties;
 }
 
 export const CHAT_THEMES: Record<ChatThemeId, ChatTheme> = {
@@ -22,13 +23,23 @@ export const CHAT_THEMES: Record<ChatThemeId, ChatTheme> = {
     icon: "🌅",
     tagline: "Classic Instagram purple-to-berry gradient",
     previewGradient: "from-[#8a3ab9] via-[#e95950] to-[#bc2a8d]",
-    chatBg: "bg-[#0b0512] bg-radial-sunset",
-    sentBubble: "bg-gradient-to-r from-[#6A11CB] via-[#B827FC] to-[#FF416C] text-white shadow-lg shadow-purple-900/30",
-    partnerBubble: "bg-[#262626] text-white border border-white/10 shadow-md",
+    chatBgClass: "bg-radial-sunset",
+    chatBg: "bg-radial-sunset",
     accentColor: "#E1306C",
-    headerBorder: "border-purple-500/20",
-    inputBg: "bg-[#262626]",
-    ringColor: "ring-pink-500",
+    sentStyle: {
+      background: "linear-gradient(135deg, #7B2CBF 0%, #C77DFF 45%, #FF007F 100%)",
+      color: "#ffffff",
+      boxShadow: "0 4px 16px rgba(255, 0, 127, 0.28)",
+    },
+    partnerStyle: {
+      backgroundColor: "#262626",
+      color: "#ffffff",
+      border: "1px solid rgba(255, 255, 255, 0.12)",
+      boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
+    },
+    chatBgStyle: {
+      backgroundColor: "#0d0614",
+    },
   },
   cyber: {
     id: "cyber",
@@ -36,13 +47,23 @@ export const CHAT_THEMES: Record<ChatThemeId, ChatTheme> = {
     icon: "⚡",
     tagline: "Electric cyan, ocean blue & purple glow",
     previewGradient: "from-[#00F0FF] via-[#7000FF] to-[#FF007F]",
-    chatBg: "bg-[#050811] bg-radial-cyber",
-    sentBubble: "bg-gradient-to-r from-[#00C9FF] via-[#92FE9D] to-[#8E2DE2] text-white shadow-lg shadow-cyan-900/30",
-    partnerBubble: "bg-[#161c28] text-white border border-cyan-500/20 shadow-md",
+    chatBgClass: "bg-radial-cyber",
+    chatBg: "bg-radial-cyber",
     accentColor: "#00F0FF",
-    headerBorder: "border-cyan-500/20",
-    inputBg: "bg-[#161c28]",
-    ringColor: "ring-cyan-400",
+    sentStyle: {
+      background: "linear-gradient(135deg, #00C9FF 0%, #7000FF 50%, #FF007F 100%)",
+      color: "#ffffff",
+      boxShadow: "0 4px 16px rgba(0, 201, 255, 0.3)",
+    },
+    partnerStyle: {
+      backgroundColor: "#161c28",
+      color: "#ffffff",
+      border: "1px solid rgba(0, 240, 255, 0.25)",
+      boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
+    },
+    chatBgStyle: {
+      backgroundColor: "#050912",
+    },
   },
   rose: {
     id: "rose",
@@ -50,13 +71,23 @@ export const CHAT_THEMES: Record<ChatThemeId, ChatTheme> = {
     icon: "🌹",
     tagline: "Warm couple romance with ruby & coral tones",
     previewGradient: "from-[#FF0844] via-[#FF4E50] to-[#F857A6]",
-    chatBg: "bg-[#11050a] bg-radial-rose",
-    sentBubble: "bg-gradient-to-r from-[#E11D48] via-[#F43F5E] to-[#FB7185] text-white shadow-lg shadow-rose-900/30",
-    partnerBubble: "bg-[#25131b] text-white border border-rose-500/20 shadow-md",
+    chatBgClass: "bg-radial-rose",
+    chatBg: "bg-radial-rose",
     accentColor: "#FF2A6D",
-    headerBorder: "border-rose-500/20",
-    inputBg: "bg-[#25131b]",
-    ringColor: "ring-rose-500",
+    sentStyle: {
+      background: "linear-gradient(135deg, #E11D48 0%, #F43F5E 50%, #FB7185 100%)",
+      color: "#ffffff",
+      boxShadow: "0 4px 16px rgba(225, 29, 72, 0.3)",
+    },
+    partnerStyle: {
+      backgroundColor: "#25131b",
+      color: "#ffffff",
+      border: "1px solid rgba(244, 63, 94, 0.25)",
+      boxShadow: "0 2px 8px rgba(0, 0, 0, 0.35)",
+    },
+    chatBgStyle: {
+      backgroundColor: "#11050a",
+    },
   },
 };
 
