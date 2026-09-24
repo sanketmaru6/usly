@@ -16,17 +16,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Username required" }, { status: 400 });
   }
 
-  const memoryConversations = signalingStore.getConversationsForUser(username);
   const conversationsMap = new Map<string, any>();
 
-  // 1. In-memory conversations (from actual session activity)
-  for (const c of memoryConversations) {
-    if (c.username && c.username !== username) {
-      conversationsMap.set(c.username.toLowerCase(), c);
-    }
-  }
-
-  // 2. Fetch real conversations from MongoDB
+  // ── PRIMARY SOURCE: MongoDB (works on ALL devices) ──
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
@@ -35,23 +27,24 @@ export async function GET(req: NextRequest) {
         $or: [{ senderUsername: username }, { receiverUsername: username }],
       })
         .sort({ createdAt: -1 })
-        .limit(300);
+        .limit(300)
+        .lean();
 
       for (const m of dbMessages) {
-        const s: string = (m.senderUsername || "").toLowerCase();
-        const r: string = (m.receiverUsername || m.receiverId || "").toLowerCase();
+        const s: string = ((m as any).senderUsername || "").toLowerCase();
+        const r: string = ((m as any).receiverUsername || (m as any).receiverId || "").toLowerCase();
         const partnerUname: string = s === username ? r : s;
 
         if (partnerUname && partnerUname !== username && !conversationsMap.has(partnerUname)) {
-          let preview = m.content;
-          if (m.type === "love_ping") {
-            const ping = getPingOptionFromContent(m.content);
+          let preview = (m as any).content;
+          if ((m as any).type === "love_ping") {
+            const ping = getPingOptionFromContent((m as any).content);
             preview = `${ping.icon} Sent a ${ping.title} Ping!`;
-          } else if (m.type === "image") {
+          } else if ((m as any).type === "image") {
             preview = "📷 Photo";
-          } else if (m.type === "voice") {
-            preview = `🎤 Voice note (${m.audioDuration || 3}s)`;
-          } else if (m.type === "sticker") {
+          } else if ((m as any).type === "voice") {
+            preview = `🎤 Voice note (${(m as any).audioDuration || 3}s)`;
+          } else if ((m as any).type === "sticker") {
             preview = "✨ Sticker";
           }
 
@@ -61,36 +54,36 @@ export async function GET(req: NextRequest) {
 
           conversationsMap.set(partnerUname, {
             username: partnerUname,
-            name: (s !== username ? m.senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
-            avatar: (s !== username ? m.senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
+            name: (s !== username ? (m as any).senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
+            avatar: (s !== username ? (m as any).senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
             lastMessage: preview,
-            lastMessageType: m.type || "text",
-            lastMessageTime: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
+            lastMessageType: (m as any).type || "text",
+            lastMessageTime: (m as any).createdAt ? new Date((m as any).createdAt).toISOString() : new Date().toISOString(),
             unreadCount: 0,
             status: "online",
           });
         }
       }
 
-      // Fetch accepted friend requests
+      // Fetch accepted friend requests (contacts without messages yet)
       const dbAccepted = await FriendRequest.find({
         $or: [{ receiverUsername: username }, { senderUsername: username }],
         status: "accepted",
-      });
+      }).lean();
 
       for (const reqItem of dbAccepted) {
-        const s: string = (reqItem.senderUsername || "").toLowerCase();
-        const r: string = (reqItem.receiverUsername || "").toLowerCase();
+        const s: string = ((reqItem as any).senderUsername || "").toLowerCase();
+        const r: string = ((reqItem as any).receiverUsername || "").toLowerCase();
         const partnerUname: string = s === username ? r : s;
 
         if (partnerUname && partnerUname !== username && !conversationsMap.has(partnerUname)) {
           conversationsMap.set(partnerUname, {
             username: partnerUname,
-            name: (s !== username ? reqItem.senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
-            avatar: (s !== username ? reqItem.senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
+            name: (s !== username ? (reqItem as any).senderName : null) || partnerUname.charAt(0).toUpperCase() + partnerUname.slice(1),
+            avatar: (s !== username ? (reqItem as any).senderAvatar : null) || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUname}`,
             lastMessage: "Connected! Click to chat ✨",
             lastMessageType: "text",
-            lastMessageTime: reqItem.createdAt ? new Date(reqItem.createdAt).toISOString() : new Date().toISOString(),
+            lastMessageTime: (reqItem as any).createdAt ? new Date((reqItem as any).createdAt).toISOString() : new Date().toISOString(),
             unreadCount: 0,
             status: "online",
           });
@@ -100,13 +93,13 @@ export async function GET(req: NextRequest) {
       // Enrich avatars & names from User records
       const partnerUsernames = Array.from(conversationsMap.keys());
       if (partnerUsernames.length > 0) {
-        const users = await User.find({ username: { $in: partnerUsernames } });
+        const users = await User.find({ username: { $in: partnerUsernames } }).lean();
         for (const u of users) {
-          const existing = conversationsMap.get(u.username.toLowerCase());
+          const existing = conversationsMap.get((u as any).username.toLowerCase());
           if (existing) {
-            existing.name = u.name || existing.name;
-            if (u.avatar) existing.avatar = u.avatar;
-            existing.status = u.status || "online";
+            existing.name = (u as any).name || existing.name;
+            if ((u as any).avatar) existing.avatar = (u as any).avatar;
+            existing.status = (u as any).status || "online";
           }
         }
       }
@@ -115,7 +108,19 @@ export async function GET(req: NextRequest) {
     console.error("Conversations GET DB error:", err.message);
   }
 
-  // Also enrich from in-memory presence if available
+  // ── SECONDARY: In-memory for very recent activity (< 10s, not yet in DB) ──
+  const tenSecondsAgo = Date.now() - 10_000;
+  const memoryConversations = signalingStore.getConversationsForUser(username);
+  for (const c of memoryConversations) {
+    if (c.username && c.username !== username && !conversationsMap.has(c.username.toLowerCase())) {
+      const msgTime = c.lastMessageTime ? new Date(c.lastMessageTime).getTime() : 0;
+      if (msgTime >= tenSecondsAgo) {
+        conversationsMap.set(c.username.toLowerCase(), c);
+      }
+    }
+  }
+
+  // Enrich with live presence data (online/offline status)
   for (const [pUname, conv] of conversationsMap.entries()) {
     const liveU = signalingStore.getUser(pUname);
     if (liveU) {
@@ -125,7 +130,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Sort conversations so the latest active conversation appears at the top
   const sortedConversations = Array.from(conversationsMap.values()).sort(
     (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
   );

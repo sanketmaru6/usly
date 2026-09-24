@@ -316,17 +316,19 @@ export default function ChatPage() {
       )
     );
 
-    // 3. Immediately load messages for THIS contact from localStorage synchronously
+    // 3. Clear messages immediately and load from DB (source of truth for all devices)
     if (myUname) {
       localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
       localStorage.setItem(`usly_last_active_partner_${myUname}`, partnerUname);
       localStorage.setItem(`usly_last_active_partner_obj_${myUname}`, JSON.stringify(contact));
       const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
+
+      // Show cached messages instantly while DB loads (improves perceived speed)
       try {
         const cachedStr = localStorage.getItem(cacheKey);
         if (cachedStr) {
           const cached = JSON.parse(cachedStr);
-          if (Array.isArray(cached)) {
+          if (Array.isArray(cached) && cached.length > 0) {
             setMessages(cached);
           } else {
             setMessages([]);
@@ -338,7 +340,7 @@ export default function ChatPage() {
         setMessages([]);
       }
 
-      // 4. Immediately fetch newest messages from server and merge so no message is ever lost
+      // Always fetch authoritative messages from DB — this is what shows on new devices
       fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
         .then((r) => r.json())
         .then((data) => {
@@ -347,11 +349,10 @@ export default function ChatPage() {
             data.messages &&
             Array.isArray(data.messages)
           ) {
-            setMessages((prev) => {
-              const merged = mergeMessagesList(prev, data.messages);
-              localStorage.setItem(cacheKey, JSON.stringify(merged));
-              return merged;
-            });
+            // DB response always wins — replace local cache with authoritative data
+            const dbMessages: MessageItem[] = data.messages;
+            setMessages(dbMessages);
+            localStorage.setItem(cacheKey, JSON.stringify(dbMessages));
           }
         })
         .catch(() => {});
@@ -556,7 +557,7 @@ export default function ChatPage() {
       .catch(() => {});
   }, [session, authStatus, router]);
 
-  // 2. Load cached messages whenever selectedUser changes with race condition protection
+  // 2. Load messages from DB whenever selectedUser changes (DB is source of truth)
   useEffect(() => {
     if (!currentUser || !selectedUser) return;
     let isCancelled = false;
@@ -566,12 +567,12 @@ export default function ChatPage() {
     localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
     const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
 
-    // Always load this selected user's cached messages (or empty if none)
+    // Show cache immediately for perceived speed (but DB will replace it)
     try {
       const cachedMsgsStr = localStorage.getItem(cacheKey);
       if (cachedMsgsStr) {
         const cachedMsgs = JSON.parse(cachedMsgsStr);
-        if (Array.isArray(cachedMsgs)) {
+        if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
           setMessages(cachedMsgs);
         } else {
           setMessages([]);
@@ -583,17 +584,16 @@ export default function ChatPage() {
       setMessages([]);
     }
 
-    // Fetch latest messages from API with race condition protection
+    // Always fetch from DB — authoritative source for ALL devices
     fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
       .then((r) => r.json())
       .then((data) => {
         if (!isCancelled && data.messages && Array.isArray(data.messages)) {
           if (selectedUserRef.current?.username.toLowerCase() === partnerUname) {
-            setMessages((prev) => {
-              const merged = mergeMessagesList(prev, data.messages);
-              localStorage.setItem(cacheKey, JSON.stringify(merged));
-              return merged;
-            });
+            // DB response is authoritative — update cache and state
+            const dbMessages: MessageItem[] = data.messages;
+            setMessages(dbMessages);
+            localStorage.setItem(cacheKey, JSON.stringify(dbMessages));
           }
         }
       })
@@ -938,7 +938,7 @@ export default function ChatPage() {
           }
         }
 
-        // 2. Fetch Messages for active selected chat
+        // 2. Fetch Messages for active selected chat (DB is source of truth)
         const currentSelected = selectedUserRef.current;
         if (currentSelected) {
           const myUname = currentUser.username.toLowerCase();
@@ -953,24 +953,30 @@ export default function ChatPage() {
               Array.isArray(msgData.messages) &&
               selectedUserRef.current?.username.toLowerCase() === partnerUname
             ) {
+              const dbMessages: MessageItem[] = msgData.messages;
               setMessages((prev) => {
-                const merged = mergeMessagesList(prev, msgData.messages);
+                // Play sound if new messages arrived from the other person
                 if (
-                  merged.length > prev.length &&
+                  dbMessages.length > prev.length &&
                   prev.length > 0 &&
-                  merged[merged.length - 1].senderUsername.toLowerCase() !== myUname
+                  dbMessages[dbMessages.length - 1].senderUsername.toLowerCase() !== myUname
                 ) {
-                  const latestMsg = merged[merged.length - 1];
+                  const latestMsg = dbMessages[dbMessages.length - 1];
                   soundFX.playChatSound();
                   if (isLoveMessage(latestMsg.content, latestMsg.type)) {
                     setTriggerHeart(Date.now());
                   }
                 }
+                // Also keep any optimistic messages not yet in DB (id starts with opt_)
+                const optMessages = prev.filter((m) => m.id.startsWith("opt_"));
+                const finalMessages = optMessages.length > 0
+                  ? mergeMessagesList(dbMessages, optMessages)
+                  : dbMessages;
                 localStorage.setItem(
                   `usly_msgs_${myUname}_${partnerUname}`,
-                  JSON.stringify(merged)
+                  JSON.stringify(finalMessages)
                 );
-                return merged;
+                return finalMessages;
               });
             }
           }

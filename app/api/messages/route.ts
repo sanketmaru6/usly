@@ -14,9 +14,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ messages: [] });
   }
 
-  const allMessagesMap = new Map<string, any>();
-
-  // 1. Fetch from MongoDB first
+  // ── PRIMARY SOURCE: MongoDB (works on ALL devices, all sessions) ──
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
@@ -24,60 +22,55 @@ export async function GET(req: NextRequest) {
         $or: [
           { senderUsername: myUsername, receiverUsername: partnerUsername },
           { senderUsername: partnerUsername, receiverUsername: myUsername },
-          { senderUsername: myUsername, receiverId: partnerUsername },
-          { senderUsername: partnerUsername, receiverId: myUsername },
         ],
       })
         .sort({ createdAt: 1 })
-        .limit(500);
+        .limit(500)
+        .lean();
 
       if (messages && messages.length > 0) {
-        for (const m of messages) {
-          const id = m._id.toString();
-          allMessagesMap.set(id, {
-            id,
-            senderUsername: m.senderUsername,
-            senderName: m.senderName || m.senderUsername,
-            senderAvatar: m.senderAvatar,
-            receiverUsername: m.receiverUsername || m.receiverId,
-            type: m.type,
-            content: m.content,
-            audioDuration: m.audioDuration,
-            reactions: m.reactions || [],
-            createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
-          });
+        const dbMessages = messages.map((m: any) => ({
+          id: m._id.toString(),
+          senderUsername: m.senderUsername,
+          senderName: m.senderName || m.senderUsername,
+          senderAvatar: m.senderAvatar,
+          receiverUsername: m.receiverUsername || m.receiverId,
+          type: m.type,
+          content: m.content,
+          audioDuration: m.audioDuration,
+          reactions: m.reactions || [],
+          createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
+        }));
+
+        // Also merge in-memory for messages sent < 10 seconds ago (not yet in DB index)
+        const tenSecondsAgo = Date.now() - 10_000;
+        const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername) || [];
+        const dbIds = new Set(dbMessages.map((m) => m.id));
+
+        for (const m of memMessages) {
+          if (!m || !m.id) continue;
+          if (dbIds.has(m.id)) continue;
+          // Only include very recent in-memory messages not yet persisted
+          const msgTime = m.createdAt ? new Date(m.createdAt).getTime() : 0;
+          if (msgTime >= tenSecondsAgo) {
+            dbMessages.push(m as any);
+          }
         }
+
+        dbMessages.sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+
+        return NextResponse.json({ messages: dbMessages });
       }
     }
   } catch (err: any) {
     console.error("Messages GET DB error:", err.message);
   }
 
-  // 2. Merge in-memory store so newest messages in memory are never missed
+  // ── FALLBACK: In-memory only (DB unreachable) ──
   const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername) || [];
-  for (const m of memMessages) {
-    if (m && m.id) {
-      const existing = allMessagesMap.get(m.id);
-      if (!existing) {
-        // Also deduplicate by content + sender + time proximity
-        const isDuplicate = Array.from(allMessagesMap.values()).some(
-          (ex) =>
-            ex.content === m.content &&
-            ex.senderUsername?.toLowerCase() === m.senderUsername?.toLowerCase() &&
-            Math.abs(new Date(ex.createdAt).getTime() - new Date(m.createdAt).getTime()) < 6000
-        );
-        if (!isDuplicate) {
-          allMessagesMap.set(m.id, m);
-        }
-      }
-    }
-  }
-
-  const finalMessages = Array.from(allMessagesMap.values()).sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
-
-  return NextResponse.json({ messages: finalMessages });
+  return NextResponse.json({ messages: memMessages });
 }
 
 export async function POST(req: NextRequest) {
@@ -103,24 +96,8 @@ export async function POST(req: NextRequest) {
     const sUname = senderUsername.toLowerCase().trim();
     const rUname = receiverUsername.toLowerCase().trim();
 
-    const newMessage = {
-      id: "msg_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
-      senderId: `usr_${sUname}`,
-      senderUsername: sUname,
-      senderName: senderName || sUname,
-      senderAvatar: senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
-      receiverUsername: rUname,
-      type: type || "text",
-      content,
-      audioDuration: audioDuration || 0,
-      reactions: [],
-      createdAt: new Date().toISOString(),
-    };
-
-    // Store in-memory
-    signalingStore.addMessage(newMessage as any);
-
-    // Persist in MongoDB
+    // ── STEP 1: Save to MongoDB FIRST (source of truth) ──
+    let dbId: string | null = null;
     try {
       const dbRes = await connectToDatabase();
       if (dbRes.isConnected) {
@@ -137,12 +114,29 @@ export async function POST(req: NextRequest) {
           reactions: [],
         });
         if (saved) {
-          newMessage.id = saved._id.toString();
+          dbId = saved._id.toString();
         }
       }
     } catch (err: any) {
       console.error("Save message DB error:", err.message);
     }
+
+    const newMessage = {
+      id: dbId || "msg_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+      senderId: `usr_${sUname}`,
+      senderUsername: sUname,
+      senderName: senderName || sUname,
+      senderAvatar: senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
+      receiverUsername: rUname,
+      type: type || "text",
+      content,
+      audioDuration: audioDuration || 0,
+      reactions: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    // ── STEP 2: Store in-memory for real-time SSE broadcast ──
+    signalingStore.addMessage(newMessage as any);
 
     return NextResponse.json({ success: true, message: newMessage });
   } catch (error: any) {
@@ -162,8 +156,10 @@ export async function PUT(req: NextRequest) {
       );
     }
 
+    // Update in-memory for instant SSE reflection
     signalingStore.addReaction(messageId, user, emoji);
 
+    // Persist to MongoDB
     try {
       const dbRes = await connectToDatabase();
       if (dbRes.isConnected && messageId.length === 24) {
