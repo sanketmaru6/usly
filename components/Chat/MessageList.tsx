@@ -72,8 +72,14 @@ export default function MessageList({
     }
   };
 
+  // Safe inner-container scroll (avoids document-level jumping on mobile browsers)
   const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior,
+    });
     setNewMessagesBelow(0);
     setIsNearBottom(true);
     isNearBottomRef.current = true;
@@ -88,17 +94,18 @@ export default function MessageList({
     const isMyMessage = lastMsg?.senderUsername?.toLowerCase() === currentUsername?.toLowerCase();
 
     if (isInitialLoad) {
-      setTimeout(() => scrollToBottom("auto"), 50);
+      // Instant snap on initial load
+      requestAnimationFrame(() => scrollToBottom("auto"));
     } else if (currentCount > prevCount) {
       if (isMyMessage) {
-        scrollToBottom("smooth");
+        requestAnimationFrame(() => scrollToBottom("smooth"));
       } else if (autoScroll && isNearBottomRef.current) {
-        scrollToBottom("smooth");
+        requestAnimationFrame(() => scrollToBottom("smooth"));
       } else {
         setNewMessagesBelow((prev) => prev + (currentCount - prevCount));
       }
     } else if (isPartnerTyping && autoScroll && isNearBottomRef.current) {
-      scrollToBottom("smooth");
+      requestAnimationFrame(() => scrollToBottom("smooth"));
     }
 
     prevMessagesLengthRef.current = currentCount;
@@ -123,6 +130,7 @@ export default function MessageList({
   const formatTime = (dateStr: string) => {
     try {
       const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return "";
       return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     } catch {
       return "";
@@ -132,6 +140,7 @@ export default function MessageList({
   const getMessageDateHeader = (dateStr: string) => {
     try {
       const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "";
       const now = new Date();
       if (d.toDateString() === now.toDateString()) return "Today";
       const yesterday = new Date();
@@ -144,30 +153,39 @@ export default function MessageList({
   };
 
   return (
-    <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+    <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden select-none sm:select-auto">
       {/* Messages Scroll Container */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-3 relative scroll-smooth"
+        className="flex-1 overflow-y-auto px-3 sm:px-5 py-3 sm:py-4 space-y-1.5 relative scroll-smooth overscroll-contain"
       >
         {messages.filter(Boolean).map((msg, index) => {
           const isMe = (msg.senderUsername || "").toLowerCase() === (currentUsername || "").toLowerCase();
           const contentStr = msg.content || "";
 
-          // Calculate if date divider is needed
+          // Date divider calculation
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const showDateDivider =
             !prevMsg ||
             new Date(msg.createdAt).toDateString() !== new Date(prevMsg.createdAt).toDateString();
           const dateLabel = showDateDivider ? getMessageDateHeader(msg.createdAt) : "";
 
+          // Consecutive message grouping calculation
+          const isSameSenderAsPrev =
+            prevMsg &&
+            (prevMsg.senderUsername || "").toLowerCase() === (msg.senderUsername || "").toLowerCase();
+          const timeDiffPrev = prevMsg
+            ? Math.abs(new Date(msg.createdAt).getTime() - new Date(prevMsg.createdAt).getTime())
+            : Infinity;
+          const isGroupedWithPrev = isSameSenderAsPrev && timeDiffPrev < 2 * 60 * 1000 && !showDateDivider;
+
           return (
             <React.Fragment key={msg.id || `msg_${index}`}>
-              {/* WhatsApp-style Date Divider */}
+              {/* WhatsApp-style Floating Date Divider */}
               {showDateDivider && dateLabel && (
-                <div className="flex justify-center my-3">
-                  <span className="px-3 py-1 rounded-full bg-usly-surface/90 border border-white/10 text-[10px] sm:text-[11px] font-medium text-zinc-300 shadow-sm backdrop-blur-md">
+                <div className="flex justify-center my-3 sm:my-4 sticky top-1 z-10">
+                  <span className="px-3 py-1 rounded-full bg-zinc-900/90 border border-white/10 text-[10px] sm:text-[11px] font-semibold text-zinc-300 shadow-md backdrop-blur-md">
                     {dateLabel}
                   </span>
                 </div>
@@ -177,9 +195,9 @@ export default function MessageList({
               {msg.type === "love_ping" && (() => {
                 const pingOpt = getPingOptionFromContent(contentStr);
                 return (
-                  <div className="flex justify-center my-3 px-2">
+                  <div className={`flex justify-center px-2 ${isGroupedWithPrev ? "mt-1.5" : "my-2.5"}`}>
                     <div
-                      className={`relative max-w-sm sm:max-w-md w-full px-4 py-3 rounded-2xl sm:rounded-3xl bg-gradient-to-r ${pingOpt.badgeGradient} border ${pingOpt.borderColor} shadow-xl ${pingOpt.glowColor} text-center space-y-1 transition-transform hover:scale-[1.02]`}
+                      className={`relative max-w-sm sm:max-w-md w-full px-4 py-3 rounded-2xl sm:rounded-3xl bg-gradient-to-r ${pingOpt.badgeGradient} border ${pingOpt.borderColor} shadow-xl ${pingOpt.glowColor} text-center space-y-1 transition-transform hover:scale-[1.01]`}
                     >
                       <div className="flex items-center justify-center space-x-2">
                         <span className="text-xl sm:text-2xl animate-bounce">{pingOpt.icon}</span>
@@ -202,25 +220,27 @@ export default function MessageList({
 
               {/* 2. IMAGE / PHOTO MESSAGE TYPE */}
               {msg.type === "image" && (
-                <div className={`flex ${isMe ? "justify-end" : "justify-start"} my-2`}>
+                <div className={`flex ${isMe ? "justify-end" : "justify-start"} ${isGroupedWithPrev ? "mt-1" : "mt-2.5"}`}>
                   <div className="flex flex-col max-w-[85%] sm:max-w-sm">
                     <div
-                      className={`relative rounded-2xl sm:rounded-3xl p-1.5 overflow-hidden transition-all shadow-lg ${
-                        isMe ? "glass-bubble-me rounded-br-sm" : "glass-bubble-partner rounded-bl-sm"
+                      className={`relative p-1.5 overflow-hidden transition-all shadow-lg ${
+                        isMe
+                          ? "bg-gradient-to-br from-pink-600/90 to-purple-700/90 border border-pink-400/30 rounded-2xl rounded-tr-sm"
+                          : "bg-zinc-900/90 backdrop-blur-xl border border-white/10 rounded-2xl rounded-tl-sm"
                       }`}
                     >
                       <div
-                        className="cursor-pointer overflow-hidden rounded-xl sm:rounded-2xl relative group bg-black/40"
+                        className="cursor-pointer overflow-hidden rounded-xl relative group bg-black/40"
                         onClick={() => setPreviewImageUrl(contentStr)}
                       >
                         <img
                           src={contentStr}
                           alt="Shared photo"
-                          className="max-h-72 sm:max-h-96 w-auto object-cover rounded-xl sm:rounded-2xl group-hover:scale-[1.02] transition-transform duration-200"
+                          className="max-h-72 sm:max-h-96 w-auto object-cover rounded-xl group-hover:scale-[1.02] transition-transform duration-200"
                           loading="lazy"
                         />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                          <span className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1 rounded-full bg-black/70 text-[11px] font-bold text-white backdrop-blur-md flex items-center space-x-1 shadow-lg">
+                          <span className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1 rounded-full bg-black/75 text-[11px] font-bold text-white backdrop-blur-md flex items-center space-x-1 shadow-lg">
                             <Maximize2 className="w-3.5 h-3.5 text-usly-pink" />
                             <span>View Photo</span>
                           </span>
@@ -237,7 +257,7 @@ export default function MessageList({
 
                       {/* Display reactions */}
                       {msg.reactions && msg.reactions.length > 0 && (
-                        <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-usly-surface/95 border border-usly-pink/40 px-1.5 sm:px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
+                        <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-zinc-900 border border-pink-500/40 px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
                           {msg.reactions.map((r, i) => (
                             <span key={`${r.user}_${r.emoji}_${i}`} title={r.user}>
                               {r.emoji}
@@ -247,10 +267,10 @@ export default function MessageList({
                       )}
                     </div>
 
-                    {/* Reactions Bar */}
+                    {/* Reactions Bar on touch/hover */}
                     {onAddReaction && (
                       <div
-                        className={`flex items-center space-x-1 mt-1 px-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
+                        className={`flex items-center space-x-1 mt-1 px-1 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
                           isMe ? "justify-end" : "justify-start"
                         }`}
                       >
@@ -271,9 +291,9 @@ export default function MessageList({
 
               {/* 3. ROMANTIC STICKER TYPE */}
               {msg.type === "sticker" && (
-                <div className={`flex ${isMe ? "justify-end" : "justify-start"} my-1.5`}>
+                <div className={`flex ${isMe ? "justify-end" : "justify-start"} ${isGroupedWithPrev ? "mt-0.5" : "mt-2"}`}>
                   <div className="flex flex-col items-end">
-                    <div className="text-6xl p-2 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 hover:scale-110 transition-transform">
+                    <div className="text-5xl sm:text-6xl p-2 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 hover:scale-110 transition-transform">
                       {contentStr || "✨"}
                     </div>
                     <div className="flex items-center space-x-1 text-[10px] text-zinc-400 mt-1 px-1">
@@ -286,10 +306,12 @@ export default function MessageList({
 
               {/* 4. VOICE NOTE MESSAGE TYPE */}
               {msg.type === "voice" && (
-                <div className={`flex ${isMe ? "justify-end" : "justify-start"} my-2`}>
+                <div className={`flex ${isMe ? "justify-end" : "justify-start"} ${isGroupedWithPrev ? "mt-1" : "mt-2.5"}`}>
                   <div
-                    className={`max-w-[85%] sm:max-w-md rounded-2xl sm:rounded-3xl p-3.5 shadow-md ${
-                      isMe ? "glass-bubble-me text-white rounded-br-sm" : "glass-bubble-partner text-zinc-100 rounded-bl-sm"
+                    className={`max-w-[85%] sm:max-w-md rounded-2xl p-3 shadow-md border ${
+                      isMe
+                        ? "bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 text-white border-pink-400/30 rounded-tr-sm"
+                        : "bg-zinc-900/90 backdrop-blur-xl text-zinc-100 border-white/10 rounded-tl-sm"
                     }`}
                   >
                     <div className="flex items-center space-x-3">
@@ -316,7 +338,7 @@ export default function MessageList({
                           {[3, 7, 10, 6, 12, 8, 4, 11, 7, 5, 9, 3].map((height, i) => (
                             <div
                               key={i}
-                              className={`w-1 rounded-full bg-white/60 ${
+                              className={`w-1 rounded-full bg-white/70 ${
                                 playingAudioId === msg.id ? "animate-pulse" : ""
                               }`}
                               style={{
@@ -342,23 +364,29 @@ export default function MessageList({
 
               {/* 5. REGULAR TEXT / LOVE NOTE MESSAGE */}
               {(!msg.type || msg.type === "text" || msg.type === "question") && (
-                <div className={`flex ${isMe ? "justify-end" : "justify-start"} group my-1`}>
-                  <div className="flex flex-col max-w-[88%] sm:max-w-md">
+                <div className={`flex ${isMe ? "justify-end" : "justify-start"} group ${isGroupedWithPrev ? "mt-0.5" : "mt-2"}`}>
+                  <div className="flex flex-col max-w-[85%] sm:max-w-md">
                     <div
-                      className={`relative rounded-2xl sm:rounded-3xl px-3.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm leading-relaxed transition-all shadow-md ${
+                      className={`relative px-3.5 sm:px-4 py-2 sm:py-2.5 text-sm leading-relaxed transition-all shadow-md select-text ${
                         isMe
-                          ? "glass-bubble-me text-white rounded-br-sm"
-                          : "glass-bubble-partner text-zinc-100 rounded-bl-sm"
+                          ? `bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white shadow-pink-500/15 border border-pink-400/20 ${
+                              isGroupedWithPrev ? "rounded-2xl rounded-tr-md" : "rounded-2xl rounded-tr-xs"
+                            }`
+                          : `bg-zinc-900/90 backdrop-blur-xl text-zinc-100 border border-white/10 ${
+                              isGroupedWithPrev ? "rounded-2xl rounded-tl-md" : "rounded-2xl rounded-tl-xs"
+                            }`
                       }`}
                     >
                       {/* Text Content */}
-                      <p className="whitespace-pre-wrap break-words">{contentStr}</p>
+                      <p className="whitespace-pre-wrap break-words text-[13.5px] sm:text-[14px] leading-relaxed">
+                        {contentStr}
+                      </p>
 
                       {/* Footer with timestamp and double checkmarks */}
-                      <div className="flex items-center justify-end space-x-1 mt-0.5 text-[9px] sm:text-[10px] text-white/75">
+                      <div className="flex items-center justify-end space-x-1 mt-0.5 text-[9px] sm:text-[10px] text-white/70">
                         <span>{formatTime(msg.createdAt)}</span>
                         {isMe && (
-                          <span className="text-pink-200 text-[11px] font-bold tracking-tighter" title="Delivered">
+                          <span className="text-pink-200 text-[10px] font-bold tracking-tighter" title="Delivered">
                             ✓✓
                           </span>
                         )}
@@ -366,7 +394,7 @@ export default function MessageList({
 
                       {/* Display reactions */}
                       {msg.reactions && msg.reactions.length > 0 && (
-                        <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-usly-surface/95 border border-usly-pink/40 px-1.5 sm:px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
+                        <div className="absolute -bottom-2.5 right-2 sm:right-3 flex items-center space-x-1 bg-zinc-950 border border-pink-500/40 px-1.5 sm:px-2 py-0.5 rounded-full shadow-lg text-[10px] sm:text-xs">
                           {msg.reactions.map((r, i) => (
                             <span key={`${r.user}_${r.emoji}_${i}`} title={r.user}>
                               {r.emoji}
@@ -379,7 +407,7 @@ export default function MessageList({
                     {/* Touch & Hover Emoji Reactions Bar */}
                     {onAddReaction && (
                       <div
-                        className={`flex items-center space-x-1 mt-0.5 px-1 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
+                        className={`flex items-center space-x-1 mt-0.5 px-1 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ${
                           isMe ? "justify-end" : "justify-start"
                         }`}
                       >
@@ -403,17 +431,17 @@ export default function MessageList({
 
         {/* Partner Typing Indicator */}
         {isPartnerTyping && (
-          <div className="flex items-center space-x-2 text-xs text-usly-coral/90 pl-2">
-            <div className="flex space-x-1 bg-usly-surface/80 border border-usly-pink/30 rounded-full px-3 py-1.5 shadow-sm">
+          <div className="flex items-center space-x-2 text-xs text-usly-coral/90 pl-1 py-1">
+            <div className="flex space-x-1 bg-zinc-900/90 border border-pink-500/30 rounded-full px-3 py-1.5 shadow-sm">
               <span className="w-2 h-2 rounded-full bg-usly-pink animate-bounce" style={{ animationDelay: "0s" }} />
               <span className="w-2 h-2 rounded-full bg-usly-pink animate-bounce" style={{ animationDelay: "0.15s" }} />
               <span className="w-2 h-2 rounded-full bg-usly-pink animate-bounce" style={{ animationDelay: "0.3s" }} />
             </div>
-            <span className="italic">{partnerName} is typing...</span>
+            <span className="italic text-zinc-300 text-[11px]">{partnerName} is typing...</span>
           </div>
         )}
 
-        <div ref={bottomRef} className="h-2" />
+        <div ref={bottomRef} className="h-1" />
       </div>
 
       {/* Floating Scroll to Bottom / New Messages Pill */}
@@ -425,7 +453,7 @@ export default function MessageList({
           >
             <ChevronDown className="w-4 h-4 animate-bounce" />
             <span>
-              {newMessagesBelow > 0 ? `${newMessagesBelow} new message${newMessagesBelow > 1 ? "s" : ""}` : "Scroll to Latest"}
+              {newMessagesBelow > 0 ? `${newMessagesBelow} new message${newMessagesBelow > 1 ? "s" : ""}` : "Latest"}
             </span>
           </button>
         </div>

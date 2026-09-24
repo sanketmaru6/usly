@@ -38,8 +38,8 @@ const LOVE_QUESTIONS = [
 ];
 
 const CHAT_SOUND_OPTIONS = [
-  { id: "chime", name: "Romantic Chime", icon: "🔔", desc: "Gentle 4-note chord (Default)" },
-  { id: "pop", name: "Bubble Pop", icon: "🫧", desc: "Soft subtle pop (WhatsApp style)" },
+  { id: "chime", name: "Romantic Chime", icon: "🔔", desc: "Gentle chord (Default)" },
+  { id: "pop", name: "Bubble Pop", icon: "🫧", desc: "Soft subtle pop" },
   { id: "crystal", name: "Sweet Crystal", icon: "✨", desc: "Sparkling bell chime" },
   { id: "heartbeat", name: "Heartbeat", icon: "💖", desc: "Warm gentle pulse" },
   { id: "silent", name: "Mute / Silent", icon: "🔕", desc: "No sound during chat" },
@@ -273,8 +273,10 @@ export default function MessageInput({
     setShowStickers(false);
   };
 
+  const hasContentToSend = Boolean(text.trim() || selectedImage);
+
   return (
-    <div className="relative p-2 sm:p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] glass-panel border-t border-white/10 flex-shrink-0">
+    <div className="relative p-2 sm:p-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] glass-panel border-t border-white/10 flex-shrink-0">
       {/* Hidden File Input for Image Upload */}
       <input
         type="file"
@@ -286,9 +288,9 @@ export default function MessageInput({
 
       {/* Selected Image Preview Drawer */}
       {selectedImage && (
-        <div className="absolute bottom-full left-2 right-2 mb-2 p-3 rounded-2xl bg-zinc-950/95 border border-usly-pink/40 backdrop-blur-2xl shadow-2xl flex items-center justify-between z-30 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="absolute bottom-full left-2 right-2 mb-2 p-2.5 sm:p-3 rounded-2xl bg-zinc-950/95 border border-pink-500/40 backdrop-blur-2xl shadow-2xl flex items-center justify-between z-30 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <div className="flex items-center space-x-3 min-w-0">
-            <div className="relative w-14 h-14 rounded-xl overflow-hidden border border-usly-pink/50 shadow-md flex-shrink-0 bg-black">
+            <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden border border-pink-500/50 shadow-md flex-shrink-0 bg-black">
               <img
                 src={selectedImage}
                 alt="Upload preview"
@@ -296,9 +298,9 @@ export default function MessageInput({
               />
             </div>
             <div className="min-w-0">
-              <span className="text-xs font-bold text-white block truncate">Photo Ready to Send 📸</span>
+              <span className="text-xs font-bold text-white block truncate">Photo Ready 📸</span>
               <span className="text-[10px] text-zinc-400 block truncate">
-                Add a message below or tap Send
+                Add text below or tap Send
               </span>
             </div>
           </div>
@@ -313,7 +315,7 @@ export default function MessageInput({
             </button>
             <button
               onClick={handleSend}
-              className="px-3.5 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md shadow-usly-pink/30 hover:opacity-95 transition active:scale-90 flex items-center space-x-1"
+              className="px-3 py-1.5 rounded-xl bg-gradient-love text-white text-xs font-bold shadow-md shadow-pink-500/30 hover:opacity-95 transition active:scale-90 flex items-center space-x-1"
             >
               <Send className="w-3.5 h-3.5" />
               <span>Send</span>
@@ -324,26 +326,26 @@ export default function MessageInput({
 
       {/* Sticker & Love Questions Popover */}
       {showStickers && (
-        <div className="absolute bottom-full left-2 right-2 mb-2 glass-panel-glow rounded-2xl p-3 sm:p-4 shadow-2xl border border-usly-pink/30 animate-in fade-in slide-in-from-bottom-2 duration-150 z-30 bg-zinc-950/95 backdrop-blur-2xl">
+        <div className="absolute bottom-full left-2 right-2 sm:left-4 sm:right-auto sm:w-80 mb-2 rounded-2xl p-3 sm:p-4 shadow-2xl border border-pink-500/30 animate-in fade-in slide-in-from-bottom-2 duration-150 z-30 bg-zinc-950/95 backdrop-blur-2xl">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] sm:text-xs font-bold text-usly-coral uppercase tracking-wider">
+            <span className="text-[11px] font-bold text-usly-coral uppercase tracking-wider">
               Romantic Stickers
             </span>
             <button
               onClick={handleSendRandomQuestion}
-              className="text-[10px] sm:text-[11px] flex items-center space-x-1 px-2.5 py-1 rounded-full bg-usly-pink/20 hover:bg-usly-pink/30 text-pink-200 border border-usly-pink/40 transition"
+              className="text-[10px] flex items-center space-x-1 px-2.5 py-1 rounded-full bg-pink-500/20 hover:bg-pink-500/30 text-pink-200 border border-pink-500/40 transition"
             >
               <Sparkles className="w-3 h-3 text-usly-pink" />
               <span>Ask Question</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-6 gap-1.5 sm:gap-2 text-xl sm:text-2xl py-1">
+          <div className="grid grid-cols-6 gap-1.5 text-xl sm:text-2xl py-1">
             {ROMANTIC_STICKERS.map((sticker) => (
               <button
                 key={sticker}
                 onClick={() => handleSendSticker(sticker)}
-                className="hover:scale-125 transition-transform p-1.5 rounded-xl hover:bg-white/10 flex items-center justify-center"
+                className="hover:scale-125 transition-transform p-1 rounded-xl hover:bg-white/10 flex items-center justify-center"
               >
                 {sticker}
               </button>
@@ -361,12 +363,12 @@ export default function MessageInput({
             setShowStickers(!showStickers);
             setShowSoundMenu(false);
           }}
-          className={`p-2 sm:p-2.5 rounded-xl sm:rounded-2xl transition border flex-shrink-0 active:scale-90 ${
+          className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl transition border flex-shrink-0 flex items-center justify-center active:scale-90 ${
             showStickers
-              ? "bg-usly-pink text-white border-usly-pink"
-              : "bg-usly-surface/80 hover:bg-usly-surface text-zinc-300 border-white/10"
+              ? "bg-pink-500 text-white border-pink-500 shadow-md shadow-pink-500/30"
+              : "bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border-white/10"
           }`}
-          title="Stickers"
+          title="Stickers & Emojis"
         >
           <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
@@ -376,8 +378,8 @@ export default function MessageInput({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isProcessingImage}
-          className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-usly-surface/80 hover:bg-usly-surface text-sky-300 hover:text-white border border-white/10 transition active:scale-90 flex-shrink-0"
-          title="Send Photo / Image"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-zinc-900/80 hover:bg-zinc-800 text-sky-300 hover:text-white border border-white/10 transition active:scale-90 flex-shrink-0 flex items-center justify-center"
+          title="Send Photo"
         >
           {isProcessingImage ? (
             <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-sky-400" />
@@ -386,26 +388,16 @@ export default function MessageInput({
           )}
         </button>
 
-        {/* Love Ping Quick Buzzer */}
-        <button
-          type="button"
-          onClick={onSendLovePing}
-          className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-usly-pink/15 hover:bg-usly-pink/30 text-usly-pink border border-usly-pink/30 transition active:scale-90 flex-shrink-0"
-          title="Love Ping"
-        >
-          <Heart className="w-4 h-4 sm:w-5 sm:h-5 fill-usly-pink animate-heartbeat" />
-        </button>
-
         {/* Text Input / Recording State */}
         {isRecording ? (
-          <div className="flex-1 flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl bg-red-950/40 border border-red-500/30 text-red-300 animate-pulse min-w-0">
+          <div className="flex-1 flex items-center justify-between px-3 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl bg-red-950/40 border border-red-500/40 text-red-300 animate-pulse min-w-0">
             <div className="flex items-center space-x-1.5 truncate">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping flex-shrink-0" />
-              <span className="text-xs sm:text-xs font-bold truncate">Recording ({recordSeconds}s)</span>
+              <span className="text-xs font-bold truncate">Recording ({recordSeconds}s)</span>
             </div>
             <button
               onClick={stopRecording}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-red-500 text-white text-xs font-bold shadow-md hover:bg-red-600 transition active:scale-90 flex-shrink-0 ml-1"
+              className="flex items-center space-x-1 px-3 py-1 rounded-xl bg-red-500 text-white text-xs font-bold shadow-md hover:bg-red-600 transition active:scale-90 flex-shrink-0 ml-1"
             >
               <Square className="w-3 h-3 fill-white" />
               <span>Send</span>
@@ -419,104 +411,111 @@ export default function MessageInput({
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder={selectedImage ? "Add a caption with your photo..." : "Message..."}
-              className="w-full bg-usly-surface/90 border border-white/10 focus:border-usly-pink/60 rounded-xl sm:rounded-2xl px-3.5 sm:px-4 py-2 sm:py-2.5 text-base sm:text-sm text-white placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-usly-pink/30 transition font-medium"
+              placeholder={selectedImage ? "Caption..." : "Message..."}
+              className="w-full bg-zinc-900/90 border border-white/15 focus:border-pink-500/60 rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 text-base sm:text-sm text-white placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-pink-500/30 transition font-medium"
             />
           </div>
         )}
 
-        {/* ── Live Chat Sound Setting Button ── */}
-        {!isRecording && (
-          <div className="relative flex-shrink-0" ref={soundMenuRef}>
+        {/* Right Action Buttons */}
+        {!isRecording && !hasContentToSend && (
+          <>
+            {/* Love Ping Button */}
             <button
               type="button"
-              onClick={() => {
-                setShowSoundMenu(!showSoundMenu);
-                setShowStickers(false);
-              }}
-              className={`p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border transition active:scale-90 flex items-center justify-center ${
-                selectedSound === "silent"
-                  ? "bg-red-500/15 border-red-500/40 text-red-400 hover:bg-red-500/25"
-                  : "bg-usly-surface/80 hover:bg-usly-purple/20 text-purple-300 hover:text-white border-white/10"
-              }`}
-              title={
-                selectedSound === "silent"
-                  ? "Live Chat Sound: Muted (Click to change)"
-                  : `Live Chat Sound: ${CHAT_SOUND_OPTIONS.find((s) => s.id === selectedSound)?.name || selectedSound} (Click to change)`
-              }
+              onClick={onSendLovePing}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-pink-500/15 hover:bg-pink-500/25 text-pink-400 border border-pink-500/30 transition active:scale-90 flex-shrink-0 flex items-center justify-center"
+              title="Love Ping"
             >
-              {selectedSound === "silent" ? (
-                <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" />
-              ) : (
-                <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-purple-300" />
-              )}
+              <Heart className="w-4 h-4 sm:w-5 sm:h-5 fill-pink-500 text-pink-400 animate-heartbeat" />
             </button>
 
-            {/* Chat Sound Selection Popover */}
-            {showSoundMenu && (
-              <div className="absolute bottom-full right-0 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 mb-2.5 w-64 glass-panel-glow rounded-2xl p-3 shadow-2xl border border-white/15 animate-in fade-in slide-in-from-bottom-2 duration-150 z-40 bg-zinc-950/95 backdrop-blur-2xl">
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
-                  <span className="text-[11px] font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
-                    <span>🎵 Live Chat Sound</span>
-                  </span>
-                  <span className="text-[10px] text-zinc-400">Click to preview</span>
-                </div>
+            {/* Live Chat Sound Button */}
+            <div className="relative flex-shrink-0" ref={soundMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSoundMenu(!showSoundMenu);
+                  setShowStickers(false);
+                }}
+                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl border transition active:scale-90 flex items-center justify-center ${
+                  selectedSound === "silent"
+                    ? "bg-red-500/15 border-red-500/40 text-red-400"
+                    : "bg-zinc-900/80 hover:bg-zinc-800 text-purple-300 border-white/10"
+                }`}
+                title="Chat Sound Settings"
+              >
+                {selectedSound === "silent" ? (
+                  <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" />
+                ) : (
+                  <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-purple-300" />
+                )}
+              </button>
 
-                <div className="space-y-1">
-                  {CHAT_SOUND_OPTIONS.map((opt) => {
-                    const isSelected = selectedSound === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => handleSelectSound(opt.id)}
-                        className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition active:scale-95 ${
-                          isSelected
-                            ? "bg-usly-pink/25 border border-usly-pink/50 text-white shadow-sm"
-                            : "hover:bg-white/5 border border-transparent text-zinc-300 hover:text-white"
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2.5 min-w-0">
-                          <span className="text-base flex-shrink-0">{opt.icon}</span>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold leading-tight truncate">{opt.name}</p>
-                            <p className="text-[10px] text-zinc-400 leading-tight truncate">{opt.desc}</p>
+              {/* Chat Sound Popover */}
+              {showSoundMenu && (
+                <div className="absolute bottom-full right-0 mb-2.5 w-60 sm:w-64 rounded-2xl p-3 shadow-2xl border border-white/15 animate-in fade-in slide-in-from-bottom-2 duration-150 z-40 bg-zinc-950/95 backdrop-blur-2xl">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <span className="text-[11px] font-bold text-white uppercase tracking-wider">
+                      🎵 Live Chat Sound
+                    </span>
+                    <span className="text-[10px] text-zinc-400">Preview</span>
+                  </div>
+
+                  <div className="space-y-1">
+                    {CHAT_SOUND_OPTIONS.map((opt) => {
+                      const isSelected = selectedSound === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          onClick={() => handleSelectSound(opt.id)}
+                          className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition active:scale-95 ${
+                            isSelected
+                              ? "bg-pink-500/20 border border-pink-500/50 text-white shadow-sm"
+                              : "hover:bg-white/5 border border-transparent text-zinc-300 hover:text-white"
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0">
+                            <span className="text-base flex-shrink-0">{opt.icon}</span>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold leading-tight truncate">{opt.name}</p>
+                              <p className="text-[10px] text-zinc-400 leading-tight truncate">{opt.desc}</p>
+                            </div>
                           </div>
-                        </div>
-                        {isSelected && (
-                          <div className="w-5 h-5 rounded-full bg-usly-pink/30 flex items-center justify-center flex-shrink-0 ml-2">
-                            <Check className="w-3.5 h-3.5 text-usly-pink" />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
+                          {isSelected && (
+                            <div className="w-5 h-5 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 ml-2">
+                              <Check className="w-3.5 h-3.5 text-pink-400" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+
+            {/* Mic / Voice Note Button */}
+            <button
+              type="button"
+              onClick={startRecording}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-zinc-900/80 hover:bg-zinc-800 text-purple-300 hover:text-white border border-white/10 transition active:scale-90 flex-shrink-0 flex items-center justify-center"
+              title="Record Voice Note"
+            >
+              <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          </>
         )}
 
-        {/* Mic / Voice Note Button */}
-        {!isRecording && !text.trim() && !selectedImage && (
-          <button
-            type="button"
-            onClick={startRecording}
-            className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-usly-surface/80 hover:bg-usly-purple/20 text-purple-300 hover:text-white border border-white/10 transition active:scale-90 flex-shrink-0"
-            title="Record Voice Note"
-          >
-            <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-        )}
-
-        {/* Send Button */}
-        {(text.trim() || selectedImage) && (
+        {/* Send Button when typing or image attached */}
+        {!isRecording && hasContentToSend && (
           <button
             type="button"
             onClick={handleSend}
-            className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-gradient-love text-white shadow-lg shadow-usly-pink/30 hover:opacity-95 transition active:scale-90 flex-shrink-0"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-love text-white shadow-lg shadow-pink-500/30 hover:opacity-95 transition active:scale-90 flex-shrink-0 flex items-center justify-center animate-in fade-in zoom-in-95 duration-100"
             title="Send"
           >
-            <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+            <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
           </button>
         )}
       </div>

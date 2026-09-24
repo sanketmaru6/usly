@@ -119,30 +119,72 @@ function formatChatListTime(timeStr?: string): string {
   }
 }
 
-function mergeMessagesList(prev: MessageItem[], incoming: MessageItem[]): MessageItem[] {
-  if (!incoming || incoming.length === 0) return prev || [];
-  if (!prev || prev.length === 0) return incoming;
+function areMessagesEqual(a: MessageItem[], b: MessageItem[]): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    const msgA = a[i];
+    const msgB = b[i];
+    if (!msgA || !msgB) return false;
+    if (msgA.id !== msgB.id) return false;
+    if (msgA.content !== msgB.content) return false;
+    if (msgA.type !== msgB.type) return false;
+    if ((msgA.reactions?.length || 0) !== (msgB.reactions?.length || 0)) return false;
+  }
+  return true;
+}
+
+function reconcileMessages(
+  prevMessages: MessageItem[],
+  dbMessages: MessageItem[],
+  currentUsername: string
+): MessageItem[] {
+  if (!dbMessages || dbMessages.length === 0) {
+    return prevMessages || [];
+  }
+  if (!prevMessages || prevMessages.length === 0) {
+    return dbMessages;
+  }
 
   const map = new Map<string, MessageItem>();
 
-  for (const m of prev) {
+  // 1. Authoritative DB messages
+  for (const m of dbMessages) {
     if (m && m.id) {
       map.set(m.id, m);
     }
   }
 
-  for (const m of incoming) {
-    if (m && m.id) {
-      for (const [key, ex] of map.entries()) {
-        if (
-          key.startsWith("opt_") &&
-          ex.content === m.content &&
-          ex.senderUsername?.toLowerCase() === m.senderUsername?.toLowerCase()
-        ) {
-          map.delete(key);
-        }
+  // 2. Preserve uncommitted optimistic or recent in-flight messages from prev
+  const sixtySecondsAgo = Date.now() - 60_000;
+
+  for (const prevMsg of prevMessages) {
+    if (!prevMsg || !prevMsg.id) continue;
+
+    if (prevMsg.id.startsWith("opt_")) {
+      // Check if DB already has a matching real message
+      const alreadyHasReal = dbMessages.some(
+        (dbM) =>
+          dbM.content === prevMsg.content &&
+          dbM.senderUsername?.toLowerCase() === prevMsg.senderUsername?.toLowerCase()
+      );
+      if (!alreadyHasReal) {
+        map.set(prevMsg.id, prevMsg);
       }
-      map.set(m.id, m);
+    } else if (!map.has(prevMsg.id)) {
+      // Message exists in prev (from local send or recent SSE) but DB GET didn't return it yet (replica lag)
+      const msgTime = prevMsg.createdAt ? new Date(prevMsg.createdAt).getTime() : 0;
+      if (msgTime >= sixtySecondsAgo) {
+        map.set(prevMsg.id, prevMsg);
+      }
+    } else {
+      // Both have it: retain newer local reactions if any
+      const dbMsg = map.get(prevMsg.id)!;
+      if (prevMsg.reactions && (!dbMsg.reactions || prevMsg.reactions.length > dbMsg.reactions.length)) {
+        map.set(prevMsg.id, { ...dbMsg, reactions: prevMsg.reactions });
+      }
     }
   }
 
@@ -263,6 +305,8 @@ export default function ChatPage() {
 
   // Track active ringing callId to strictly prevent duplicate notifications / double rings
   const ringingCallIdRef = useRef<string | null>(null);
+  // Track if user explicitly closed the chat so auto-select doesn't re-open it on mobile
+  const userDismissedChatRef = useRef<boolean>(false);
 
   // Single unified incoming call handler — guarantees notification fires ONLY ONCE
   const handleIncomingCallDetected = (call: {
@@ -296,11 +340,13 @@ export default function ChatPage() {
   };
 
   // Unified contact selection: synchronously sets selectedUser, switches tab,
-  // clears unread count, and loads cached messages immediately with zero flash of previous messages
+  // clears unread count, and loads cached messages immediately with zero flash
   const handleSelectContact = (contact: UserContact) => {
     if (!contact) return;
     const partnerUname = contact.username.toLowerCase();
     const myUname = (currentUserRef.current?.username || "").toLowerCase();
+
+    userDismissedChatRef.current = false;
 
     // 1. Immediately update selected contact & ensure messages tab synchronously
     selectedUserRef.current = contact;
@@ -316,46 +362,11 @@ export default function ChatPage() {
       )
     );
 
-    // 3. Clear messages immediately and load from DB (source of truth for all devices)
+    // 3. Persist active partner so refresh restores open chat
     if (myUname) {
       localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
       localStorage.setItem(`usly_last_active_partner_${myUname}`, partnerUname);
       localStorage.setItem(`usly_last_active_partner_obj_${myUname}`, JSON.stringify(contact));
-      const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
-
-      // Show cached messages instantly while DB loads (improves perceived speed)
-      try {
-        const cachedStr = localStorage.getItem(cacheKey);
-        if (cachedStr) {
-          const cached = JSON.parse(cachedStr);
-          if (Array.isArray(cached) && cached.length > 0) {
-            setMessages(cached);
-          } else {
-            setMessages([]);
-          }
-        } else {
-          setMessages([]);
-        }
-      } catch {
-        setMessages([]);
-      }
-
-      // Always fetch authoritative messages from DB — this is what shows on new devices
-      fetch(`/api/messages?myUsername=${myUname}&partnerUsername=${partnerUname}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (
-            selectedUserRef.current?.username.toLowerCase() === partnerUname &&
-            data.messages &&
-            Array.isArray(data.messages)
-          ) {
-            // DB response always wins — replace local cache with authoritative data
-            const dbMessages: MessageItem[] = data.messages;
-            setMessages(dbMessages);
-            localStorage.setItem(cacheKey, JSON.stringify(dbMessages));
-          }
-        })
-        .catch(() => {});
     }
   };
 
@@ -473,8 +484,9 @@ export default function ChatPage() {
               JSON.stringify(merged)
             );
 
-            // Always keep active chat open
-            if (!selectedUserRef.current && merged.length > 0) {
+            // Keep active chat open on desktop if not dismissed
+            const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
+            if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop && merged.length > 0) {
               const lastPartner =
                 localStorage.getItem(`usly_active_partner_${cleanUsername}`) ||
                 localStorage.getItem(`usly_last_active_partner_${cleanUsername}`);
@@ -513,8 +525,9 @@ export default function ChatPage() {
           );
           setSearchResults(filtered);
 
-          // If still no selected chat, open the first user
-          if (!selectedUserRef.current && filtered.length > 0) {
+          // On desktop, open first user if none selected
+          const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
+          if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop && filtered.length > 0) {
             const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
             const matched = lastPartner
               ? filtered.find((u: any) => u.username.toLowerCase() === lastPartner.toLowerCase()) || filtered[0]
@@ -590,10 +603,14 @@ export default function ChatPage() {
       .then((data) => {
         if (!isCancelled && data.messages && Array.isArray(data.messages)) {
           if (selectedUserRef.current?.username.toLowerCase() === partnerUname) {
-            // DB response is authoritative — update cache and state
+            // DB response is authoritative — reconcile with cache/state
             const dbMessages: MessageItem[] = data.messages;
-            setMessages(dbMessages);
-            localStorage.setItem(cacheKey, JSON.stringify(dbMessages));
+            setMessages((prev) => {
+              const reconciled = reconcileMessages(prev, dbMessages, myUname);
+              if (areMessagesEqual(prev, reconciled)) return prev;
+              localStorage.setItem(cacheKey, JSON.stringify(reconciled));
+              return reconciled;
+            });
           }
         }
       })
@@ -615,10 +632,12 @@ export default function ChatPage() {
       if (selectedUserRef.current) {
         // Back button pressed while chat is open → close chat, stay on page
         e.preventDefault();
+        userDismissedChatRef.current = true;
         selectedUserRef.current = null;
         setSelectedUser(null);
         if (currentUserRef.current) {
           localStorage.removeItem(`usly_active_partner_${currentUserRef.current.username.toLowerCase()}`);
+          localStorage.removeItem(`usly_last_active_partner_${currentUserRef.current.username.toLowerCase()}`);
         }
       }
     };
@@ -955,23 +974,28 @@ export default function ChatPage() {
             ) {
               const dbMessages: MessageItem[] = msgData.messages;
               setMessages((prev) => {
-                // Play sound if new messages arrived from the other person
-                if (
-                  dbMessages.length > prev.length &&
-                  prev.length > 0 &&
-                  dbMessages[dbMessages.length - 1].senderUsername.toLowerCase() !== myUname
-                ) {
-                  const latestMsg = dbMessages[dbMessages.length - 1];
+                // Play sound if new messages arrived from partner
+                const newPartnerMsgs = dbMessages.filter(
+                  (m) =>
+                    m.senderUsername?.toLowerCase() === partnerUname &&
+                    !prev.some((p) => p.id === m.id)
+                );
+                if (newPartnerMsgs.length > 0 && prev.length > 0) {
+                  const latestMsg = newPartnerMsgs[newPartnerMsgs.length - 1];
                   soundFX.playChatSound();
                   if (isLoveMessage(latestMsg.content, latestMsg.type)) {
                     setTriggerHeart(Date.now());
                   }
                 }
-                // Also keep any optimistic messages not yet in DB (id starts with opt_)
-                const optMessages = prev.filter((m) => m.id.startsWith("opt_"));
-                const finalMessages = optMessages.length > 0
-                  ? mergeMessagesList(dbMessages, optMessages)
-                  : dbMessages;
+
+                // Reconcile and preserve in-flight optimistic or recent messages
+                const finalMessages = reconcileMessages(prev, dbMessages, myUname);
+
+                // If identical, return prev to prevent re-render, scroll jump, and blinking!
+                if (areMessagesEqual(prev, finalMessages)) {
+                  return prev;
+                }
+
                 localStorage.setItem(
                   `usly_msgs_${myUname}_${partnerUname}`,
                   JSON.stringify(finalMessages)
@@ -2093,10 +2117,12 @@ export default function ChatPage() {
                   {/* Back / Close Chat Button */}
                   <button
                     onClick={() => {
+                      userDismissedChatRef.current = true;
                       selectedUserRef.current = null;
                       setSelectedUser(null);
                       if (currentUser) {
                         localStorage.removeItem(`usly_active_partner_${currentUser.username.toLowerCase()}`);
+                        localStorage.removeItem(`usly_last_active_partner_${currentUser.username.toLowerCase()}`);
                       }
                     }}
                     className="p-2 -ml-1 rounded-xl bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
