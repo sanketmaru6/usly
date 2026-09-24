@@ -846,9 +846,9 @@ export default function CallModal({
     }
   }, [isMinimized, hasRemoteVideo]);
 
-  // When minimizing, snap pip to safe start position
+  // When minimizing, snap thumbnails to top-left below the green banner (like Instagram)
   const handleMinimize = () => {
-    setPipPos({ x: window.innerWidth - 146, y: 80 });
+    setPipPos({ x: 10, y: 54 }); // 54px = below the 44px green banner
     setIsMinimized(true);
   };
 
@@ -856,109 +856,152 @@ export default function CallModal({
   return (
     <>
     {/* ══════════════════════════════════════════════════════════════════════
-        MINIMIZED: Instagram-style draggable floating PiP bubble
+        MINIMIZED: Instagram-style — green top banner + stacked video thumbnails
     ══════════════════════════════════════════════════════════════════════ */}
     {isMinimized && (
-      <div
-        className="fixed z-[9900] select-none touch-none"
-        style={{ left: pipPos.x, top: pipPos.y, width: 122, cursor: "grab" }}
-        onPointerDown={onPipPointerDown}
-        onPointerMove={onPipPointerMove}
-        onPointerUp={onPipPointerUp}
-      >
-        {/* Bubble container */}
+      <>
+        {/* ── Green "Tap to return" banner at the very top (like Instagram) ── */}
         <div
-          className="relative rounded-3xl overflow-hidden shadow-2xl border-2 border-white/20"
-          style={{ width: 122, height: 182 }}
+          className="fixed top-0 left-0 right-0 z-[9910] flex items-center justify-between px-4 py-2.5 cursor-pointer select-none"
+          style={{ background: "linear-gradient(90deg,#16a34a,#15803d)", minHeight: 44 }}
+          onClick={() => setIsMinimized(false)}
         >
-          {/* Remote video (or avatar if no video) */}
-          {callType === "video" && hasRemoteVideo ? (
-            <video
-              ref={pipVideoRef}
-              autoPlay
-              playsInline
-              muted={false}
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
-              <img
-                src={avatar}
-                alt={partnerName}
-                className="w-14 h-14 rounded-full object-cover ring-2 ring-white/30"
-              />
-            </div>
-          )}
-
-          {/* Dark gradient overlays */}
-          <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
-          <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
-
-          {/* Top: name + timer */}
-          <div className="absolute top-2 left-0 right-0 flex flex-col items-center pointer-events-none">
-            <span className="text-white text-[10px] font-black truncate px-1 drop-shadow-md">{partnerName}</span>
+          <div className="flex items-center space-x-2 flex-1 min-w-0">
+            {/* Pulsing dot */}
+            <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse flex-shrink-0" />
+            <span className="text-white text-[13px] font-semibold truncate">
+              Tap to return to call
+            </span>
             {status === "connected" && (
-              <span className="text-emerald-300 text-[9px] font-mono font-bold drop-shadow-md">{fmt(duration)}</span>
+              <span className="text-white/90 text-[13px] font-mono font-bold flex-shrink-0">
+                • {fmt(duration)}
+              </span>
             )}
             {status !== "connected" && (
-              <span className="text-pink-300 text-[9px] font-bold animate-pulse drop-shadow-md">
-                {status === "ringing" ? "Ringing…" : "Connecting…"}
+              <span className="text-white/80 text-[12px] animate-pulse flex-shrink-0">
+                • {status === "ringing" ? "Ringing…" : "Connecting…"}
               </span>
             )}
           </div>
-
-          {/* Expand button (top-right) */}
+          {/* End call pill on the right */}
           <button
-            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/90 transition active:scale-90 z-10"
-            onClick={(e) => { e.stopPropagation(); setIsMinimized(false); }}
-            title="Expand call"
+            className="ml-3 flex items-center space-x-1 px-3 py-1 rounded-full bg-red-500 hover:bg-red-600 text-white text-[11px] font-bold transition active:scale-95 flex-shrink-0 shadow-md"
+            onClick={(e) => { e.stopPropagation(); endCall(); }}
+            title="End Call"
           >
-            <Maximize2 className="w-3 h-3" />
+            <PhoneOff className="w-3 h-3" />
+            <span>End</span>
           </button>
+        </div>
 
-          {/* Bottom quick controls */}
-          <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center space-x-2 px-2">
-            {/* Mic toggle */}
+        {/* ── Stacked draggable mini video thumbnails (top-left, like Instagram) ── */}
+        <div
+          className="fixed z-[9900] select-none touch-none"
+          style={{ left: pipPos.x, top: pipPos.y, width: 110, cursor: "grab" }}
+          onPointerDown={onPipPointerDown}
+          onPointerMove={onPipPointerMove}
+          onPointerUp={onPipPointerUp}
+        >
+          {/* ── Partner video (top thumbnail) ── */}
+          <div
+            className="relative rounded-2xl overflow-hidden shadow-2xl border border-white/20 mb-1.5 active:opacity-80"
+            style={{ width: 110, height: 146 }}
+            onClick={(e) => { e.stopPropagation(); setIsMinimized(false); }}
+          >
+            {callType === "video" && hasRemoteVideo ? (
+              <video
+                ref={pipVideoRef}
+                autoPlay
+                playsInline
+                muted={false}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
+                <img
+                  src={avatar}
+                  alt={partnerName}
+                  className="w-12 h-12 rounded-full object-cover ring-2 ring-white/30"
+                />
+              </div>
+            )}
+            {/* Gradient overlay */}
+            <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+            {/* Partner name at bottom */}
+            <div className="absolute bottom-1.5 left-0 right-0 flex items-center justify-center pointer-events-none">
+              <span className="text-white text-[9px] font-bold drop-shadow-md truncate px-1">{partnerName}</span>
+            </div>
+            {/* Mic muted indicator */}
+            {isMicMuted && (
+              <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-red-500/90 flex items-center justify-center pointer-events-none">
+                <MicOff className="w-2.5 h-2.5 text-white" />
+              </div>
+            )}
+          </div>
+
+          {/* ── Self video (bottom thumbnail, smaller) ── */}
+          <div
+            className="relative rounded-xl overflow-hidden shadow-xl border border-white/15"
+            style={{ width: 110, height: 82 }}
+          >
+            {callType === "video" ? (
+              <video
+                ref={(el) => {
+                  if (el && localStreamRef.current && el.srcObject !== localStreamRef.current) {
+                    el.srcObject = localStreamRef.current;
+                    el.play().catch(() => {});
+                  }
+                }}
+                autoPlay
+                playsInline
+                muted
+                className={`absolute inset-0 w-full h-full object-cover scale-x-[-1] ${isVideoOff ? "opacity-0" : "opacity-100"}`}
+              />
+            ) : null}
+            {/* Cam off overlay */}
+            {(callType !== "video" || isVideoOff) && (
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-700 to-zinc-900 flex items-center justify-center">
+                {callType === "audio"
+                  ? <Mic className="w-5 h-5 text-white/70" />
+                  : <VideoOff className="w-5 h-5 text-white/50" />
+                }
+              </div>
+            )}
+            {/* "You" label */}
+            <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" />
+            <div className="absolute bottom-1 left-0 right-0 flex items-center justify-center pointer-events-none">
+              <span className="text-white/80 text-[8px] font-bold drop-shadow-md">You</span>
+            </div>
+          </div>
+
+          {/* Quick mic/video controls row below thumbnails */}
+          <div className="flex items-center justify-center space-x-2 mt-2">
             <button
-              className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg ${
-                isMicMuted ? "bg-red-500" : "bg-white/20 backdrop-blur-md"
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg border border-white/10 ${
+                isMicMuted ? "bg-red-500" : "bg-black/70 backdrop-blur-md"
               }`}
               onClick={(e) => { e.stopPropagation(); toggleMic(); }}
               title={isMicMuted ? "Unmute" : "Mute"}
             >
-              {isMicMuted ? <MicOff className="w-3.5 h-3.5 text-white" /> : <Mic className="w-3.5 h-3.5 text-white" />}
+              {isMicMuted ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4 text-white" />}
             </button>
 
-            {/* End call */}
-            <button
-              className="w-9 h-9 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition active:scale-90 shadow-xl"
-              onClick={(e) => { e.stopPropagation(); endCall(); }}
-              title="End Call"
-            >
-              <PhoneOff className="w-4 h-4 text-white" />
-            </button>
-
-            {/* Video toggle (video calls only) */}
             {callType === "video" && (
               <button
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg ${
-                  isVideoOff ? "bg-red-500" : "bg-white/20 backdrop-blur-md"
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition active:scale-90 shadow-lg border border-white/10 ${
+                  isVideoOff ? "bg-red-500" : "bg-black/70 backdrop-blur-md"
                 }`}
                 onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
-                title={isVideoOff ? "Turn on camera" : "Turn off camera"}
+                title={isVideoOff ? "Camera on" : "Camera off"}
               >
-                {isVideoOff ? <VideoOff className="w-3.5 h-3.5 text-white" /> : <Video className="w-3.5 h-3.5 text-white" />}
+                {isVideoOff ? <VideoOff className="w-4 h-4 text-white" /> : <Video className="w-4 h-4 text-white" />}
               </button>
             )}
           </div>
         </div>
-
-        {/* Pulsing ring when ringing */}
-        {status === "ringing" && (
-          <div className="absolute inset-0 rounded-3xl border-2 border-pink-500/60 animate-ping pointer-events-none" />
-        )}
-      </div>
+      </>
     )}
+
 
     {/* ══════════════════════════════════════════════════════════════════════
         FULL SCREEN CALL (hidden but MOUNTED when minimized — keeps WebRTC alive)
