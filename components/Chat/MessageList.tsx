@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   Heart,
   Play,
@@ -33,6 +33,7 @@ interface MessageListProps {
   currentUsername: string;
   partnerName?: string;
   partnerAvatar?: string;
+  partnerUsername?: string;
   themeId?: ChatThemeId;
   onAddReaction?: (messageId: string, emoji: string) => void;
   isPartnerTyping?: boolean;
@@ -45,6 +46,7 @@ export default function MessageList({
   currentUsername,
   partnerName = "Partner",
   partnerAvatar,
+  partnerUsername,
   themeId = DEFAULT_THEME_ID,
   onAddReaction,
   isPartnerTyping,
@@ -75,7 +77,7 @@ export default function MessageList({
     const el = containerRef.current;
     if (!el) return true;
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distanceToBottom < 120;
+    return distanceToBottom < 160;
   };
 
   const handleScroll = () => {
@@ -87,17 +89,33 @@ export default function MessageList({
     }
   };
 
-  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = containerRef.current;
     if (!el) return;
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior,
-    });
+    if (behavior === "auto") {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
     setNewMessagesBelow(0);
     setIsNearBottom(true);
     isNearBottomRef.current = true;
-  };
+  }, []);
+
+  // When partner changes, reset scroll tracker and pin to bottom instantly
+  useEffect(() => {
+    prevMessagesLengthRef.current = 0;
+    setNewMessagesBelow(0);
+    setIsNearBottom(true);
+    isNearBottomRef.current = true;
+    scrollToBottom("auto");
+    const t = setTimeout(() => scrollToBottom("auto"), 50);
+    return () => clearTimeout(t);
+  }, [partnerUsername, scrollToBottom]);
 
   // Smart scroll effect on message changes
   useEffect(() => {
@@ -108,21 +126,29 @@ export default function MessageList({
     const isMyMessage = lastMsg?.senderUsername?.toLowerCase() === currentUsername?.toLowerCase();
 
     if (isInitialLoad) {
-      requestAnimationFrame(() => scrollToBottom("auto"));
+      scrollToBottom("auto");
+      const t1 = setTimeout(() => scrollToBottom("auto"), 50);
+      const t2 = setTimeout(() => scrollToBottom("auto"), 200);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     } else if (currentCount > prevCount) {
       if (isMyMessage) {
-        requestAnimationFrame(() => scrollToBottom("smooth"));
+        scrollToBottom("auto");
+        const t = setTimeout(() => scrollToBottom("auto"), 40);
+        return () => clearTimeout(t);
       } else if (autoScroll && isNearBottomRef.current) {
-        requestAnimationFrame(() => scrollToBottom("smooth"));
+        scrollToBottom("auto");
       } else {
         setNewMessagesBelow((prev) => prev + (currentCount - prevCount));
       }
     } else if (isPartnerTyping && autoScroll && isNearBottomRef.current) {
-      requestAnimationFrame(() => scrollToBottom("smooth"));
+      scrollToBottom("auto");
     }
 
     prevMessagesLengthRef.current = currentCount;
-  }, [messages, isPartnerTyping, autoScroll, currentUsername]);
+  }, [messages, isPartnerTyping, autoScroll, currentUsername, scrollToBottom]);
 
   // Instagram-style double tap to like with red heart animation
   const handleBubbleClick = (msgId: string) => {
@@ -194,8 +220,35 @@ export default function MessageList({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 space-y-1 relative scroll-smooth overscroll-contain"
+        className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-5 space-y-1 relative overscroll-contain"
+        style={{ WebkitOverflowScrolling: "touch" }}
       >
+        {/* Instagram DM Header Card when thread is empty */}
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-10 px-4 text-center my-auto space-y-3 animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative">
+              <img
+                src={partnerAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${partnerUsername || partnerName}`}
+                alt={partnerName}
+                className="w-20 h-20 rounded-full border-2 border-pink-500/40 shadow-xl object-cover"
+              />
+              <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-emerald-400 ring-2 ring-black" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-base font-bold text-white">{partnerName}</h4>
+              <p className="text-xs text-zinc-400">@{partnerUsername || partnerName.toLowerCase().replace(/\s+/g, "")}</p>
+            </div>
+            <p className="text-xs text-zinc-400 max-w-xs">
+              You’re connected on Usly! Send a message or a love ping to start chatting.
+            </p>
+            <div className="pt-2">
+              <span className="px-3 py-1 rounded-full bg-white/10 text-white/80 text-[11px] font-medium border border-white/10">
+                End-to-End Private DM 🔒
+              </span>
+            </div>
+          </div>
+        )}
+
         {messages.filter(Boolean).map((msg, index) => {
           const isMe = (msg.senderUsername || "").toLowerCase() === (currentUsername || "").toLowerCase();
           const contentStr = msg.content || "";
@@ -308,6 +361,9 @@ export default function MessageList({
                           alt="Shared photo"
                           className="max-h-72 sm:max-h-96 w-auto object-cover rounded-[18px] group-hover:scale-[1.02] transition-transform duration-200"
                           loading="lazy"
+                          onLoad={() => {
+                            if (isNearBottomRef.current) scrollToBottom("auto");
+                          }}
                         />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
                           <span className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1 rounded-full bg-black/75 text-[11px] font-bold text-white backdrop-blur-md flex items-center space-x-1 shadow-lg">

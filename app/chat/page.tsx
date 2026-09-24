@@ -145,7 +145,13 @@ function reconcileMessages(
   currentUsername: string
 ): MessageItem[] {
   if (!dbMessages || dbMessages.length === 0) {
-    return prevMessages || [];
+    return (prevMessages || []).filter(
+      (m) =>
+        m &&
+        m.id &&
+        m.id.startsWith("opt_") &&
+        m.senderUsername?.toLowerCase() === currentUsername.toLowerCase()
+    );
   }
   if (!prevMessages || prevMessages.length === 0) {
     return dbMessages;
@@ -376,7 +382,21 @@ export default function ChatPage() {
       )
     );
 
-    // 3. Persist active partner so refresh restores open chat
+    // 3. Synchronously switch active message feed to this partner's cached messages (or clean empty state)
+    try {
+      const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        setMessages(Array.isArray(parsed) ? parsed : []);
+      } else {
+        setMessages([]);
+      }
+    } catch {
+      setMessages([]);
+    }
+
+    // 4. Persist active partner so refresh restores open chat
     if (myUname) {
       localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
       localStorage.setItem(`usly_last_active_partner_${myUname}`, partnerUname);
@@ -904,11 +924,14 @@ export default function ChatPage() {
               }
             }
 
-            if (
+            const isForActiveChat =
               curSelected &&
-              (senderUname === curSelected.username.toLowerCase() ||
-                receiverUname === curSelected.username.toLowerCase())
-            ) {
+              ((senderUname === curSelected.username.toLowerCase() &&
+                receiverUname === currentUser.username.toLowerCase()) ||
+                (senderUname === currentUser.username.toLowerCase() &&
+                  receiverUname === curSelected.username.toLowerCase()));
+
+            if (isForActiveChat) {
               setMessages((prev) => {
                 if (prev.some((m) => m.id === msg.id)) return prev;
                 // Reconcile optimistic message if this is our sent message
@@ -988,6 +1011,11 @@ export default function ChatPage() {
             ) {
               const dbMessages: MessageItem[] = msgData.messages;
               setMessages((prev) => {
+                // Ensure active selected partner hasn't changed during network flight
+                if (selectedUserRef.current?.username.toLowerCase() !== partnerUname) {
+                  return prev;
+                }
+
                 // Play sound if new messages arrived from partner
                 const newPartnerMsgs = dbMessages.filter(
                   (m) =>
@@ -2208,6 +2236,7 @@ export default function ChatPage() {
                   key={`msglist_${selectedUser.username.toLowerCase()}`}
                   messages={messages}
                   currentUsername={currentUser.username}
+                  partnerUsername={selectedUser.username}
                   partnerName={selectedUser.name}
                   partnerAvatar={selectedUser.avatar}
                   themeId={currentThemeId}
