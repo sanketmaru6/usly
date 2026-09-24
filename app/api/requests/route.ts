@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { connectToDatabase } from "@/lib/db";
 import { FriendRequest } from "@/lib/models/FriendRequest";
+import { User } from "@/lib/models/User";
 import { signalingStore } from "@/lib/signalingStore";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +98,41 @@ export async function GET(req: NextRequest) {
         };
         const pairKey = [r.senderUsername.toLowerCase(), r.receiverUsername.toLowerCase()].sort().join("_");
         acceptedMap.set(pairKey, item);
+      }
+
+      // Enrich user names and avatars from User collection
+      const allUsernames = new Set<string>();
+      for (const r of [...incomingMap.values(), ...outgoingMap.values(), ...acceptedMap.values()]) {
+        if (r.senderUsername) allUsernames.add(r.senderUsername.toLowerCase());
+        if (r.receiverUsername) allUsernames.add(r.receiverUsername.toLowerCase());
+      }
+      if (allUsernames.size > 0) {
+        const uList = await User.find({ username: { $in: Array.from(allUsernames) } }).select("username name avatar").lean();
+        const userMap = new Map<string, any>();
+        for (const u of uList) {
+          userMap.set(u.username.toLowerCase(), u);
+        }
+        for (const r of incomingMap.values()) {
+          const u = userMap.get(r.senderUsername.toLowerCase());
+          if (u) {
+            r.senderName = u.name || r.senderName;
+            if (u.avatar) r.senderAvatar = u.avatar;
+          }
+        }
+        for (const r of outgoingMap.values()) {
+          const u = userMap.get(r.senderUsername.toLowerCase());
+          if (u) {
+            r.senderName = u.name || r.senderName;
+            if (u.avatar) r.senderAvatar = u.avatar;
+          }
+        }
+        for (const r of acceptedMap.values()) {
+          const u = userMap.get(r.senderUsername.toLowerCase());
+          if (u) {
+            r.senderName = u.name || r.senderName;
+            if (u.avatar) r.senderAvatar = u.avatar;
+          }
+        }
       }
     }
   } catch (err: any) {

@@ -99,6 +99,26 @@ function getRemainingTime48h(createdAt?: string): { expired: boolean; text: stri
   return { expired: false, text: `${minutes}m left`, hoursLeft: 0, percent };
 }
 
+function formatChatListTime(timeStr?: string): string {
+  if (!timeStr) return "";
+  try {
+    const d = new Date(timeStr);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) {
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) {
+      return "Yesterday";
+    }
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
 function mergeMessagesList(prev: MessageItem[], incoming: MessageItem[]): MessageItem[] {
   if (!incoming || incoming.length === 0) return prev || [];
   if (!prev || prev.length === 0) return incoming;
@@ -276,7 +296,6 @@ export default function ChatPage() {
   };
 
   // Unified contact selection: synchronously sets selectedUser, switches tab,
-  // Unified contact selection: synchronously sets selectedUser, switches tab,
   // clears unread count, and loads cached messages immediately with zero flash of previous messages
   const handleSelectContact = (contact: UserContact) => {
     if (!contact) return;
@@ -300,6 +319,8 @@ export default function ChatPage() {
     // 3. Immediately load messages for THIS contact from localStorage synchronously
     if (myUname) {
       localStorage.setItem(`usly_active_partner_${myUname}`, partnerUname);
+      localStorage.setItem(`usly_last_active_partner_${myUname}`, partnerUname);
+      localStorage.setItem(`usly_last_active_partner_obj_${myUname}`, JSON.stringify(contact));
       const cacheKey = `usly_msgs_${myUname}_${partnerUname}`;
       try {
         const cachedStr = localStorage.getItem(cacheKey);
@@ -374,8 +395,8 @@ export default function ChatPage() {
     notificationService.requestPermission().catch(() => {});
 
     // Instant load cached contacts from localStorage and restore active chat partner
+    const cleanUsername = storedUsername.toLowerCase();
     try {
-      const cleanUsername = storedUsername.toLowerCase();
       const cachedContactsStr =
         localStorage.getItem(`usly_contacts_${cleanUsername}`) ||
         localStorage.getItem(`usly_contacts_${storedUsername}`);
@@ -390,11 +411,21 @@ export default function ChatPage() {
         }
       }
 
-      // Restore active chat partner on refresh so open chat is always showing
+      // Restore active chat partner on refresh so open chat is always showing exactly where user left off
+      const lastPartnerObjStr = localStorage.getItem(`usly_last_active_partner_obj_${cleanUsername}`);
       const lastPartner =
         localStorage.getItem(`usly_active_partner_${cleanUsername}`) ||
+        localStorage.getItem(`usly_last_active_partner_${cleanUsername}`) ||
         localStorage.getItem(`usly_active_partner_${storedUsername}`);
-      if (parsedContacts.length > 0) {
+
+      if (lastPartnerObjStr) {
+        try {
+          const parsedPartner = JSON.parse(lastPartnerObjStr);
+          if (parsedPartner && parsedPartner.username && parsedPartner.username.toLowerCase() !== cleanUsername) {
+            handleSelectContact(parsedPartner);
+          }
+        } catch {}
+      } else if (parsedContacts.length > 0) {
         const matched = lastPartner
           ? parsedContacts.find(
               (c) => c.username.toLowerCase() === lastPartner.toLowerCase()
@@ -407,7 +438,6 @@ export default function ChatPage() {
     } catch {}
 
     // Instant fetch live conversations from API and merge without dropping locally initiated chats
-    const cleanUsername = storedUsername.toLowerCase();
     fetch(`/api/conversations?username=${cleanUsername}`)
       .then((r) => r.json())
       .then((data) => {
@@ -444,7 +474,9 @@ export default function ChatPage() {
 
             // Always keep active chat open
             if (!selectedUserRef.current && merged.length > 0) {
-              const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
+              const lastPartner =
+                localStorage.getItem(`usly_active_partner_${cleanUsername}`) ||
+                localStorage.getItem(`usly_last_active_partner_${cleanUsername}`);
               const matched = lastPartner
                 ? merged.find((c) => c.username.toLowerCase() === lastPartner.toLowerCase()) || merged[0]
                 : merged[0];
@@ -494,7 +526,7 @@ export default function ChatPage() {
       })
       .catch(() => {});
 
-    // Register user profile in backend
+    // Register & sync user profile with MongoDB across all devices
     fetch("/api/user/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -504,6 +536,21 @@ export default function ChatPage() {
       .then((data) => {
         if (data.dbConnected !== undefined) {
           setDbStatus({ isConnected: data.dbConnected, error: data.dbError });
+        }
+        if (data.user) {
+          setCurrentUser((prev) => {
+            const updated = {
+              username: data.user.username || prev?.username || cleanUsername,
+              name: data.user.name || prev?.name || cleanUsername,
+              avatar: data.user.avatar || prev?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanUsername}`,
+              mood: data.user.mood || prev?.mood || "Ready to chat 💬",
+            };
+            localStorage.setItem("usly_username", updated.username);
+            localStorage.setItem("usly_name", updated.name);
+            localStorage.setItem("usly_avatar", updated.avatar);
+            localStorage.setItem("usly_mood", updated.mood);
+            return updated;
+          });
         }
       })
       .catch(() => {});
@@ -1585,21 +1632,25 @@ export default function ChatPage() {
                           className="w-11 h-11 rounded-full border border-usly-pink/30 object-cover"
                         />
                         <span
-                          className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-usly-dark ${
-                            contact.status === "online" ? "bg-emerald-400" : "bg-zinc-500"
+                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-usly-dark ${
+                            contact.status === "online" ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : "bg-zinc-500"
                           }`}
                         />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-0.5">
-                          <h4 className={`text-sm font-bold truncate ${contact.unreadCount ? "text-white" : "text-white/90"}`}>{contact.name}</h4>
+                          <div className="flex items-center space-x-1.5 min-w-0 flex-1 mr-2">
+                            <h4 className={`text-sm font-bold truncate ${contact.unreadCount ? "text-white" : "text-white/90"}`}>
+                              {contact.name}
+                            </h4>
+                            <span className="text-[10px] text-zinc-400 font-mono truncate hidden sm:inline">
+                              @{contact.username}
+                            </span>
+                          </div>
                           <div className="flex items-center space-x-1.5 flex-shrink-0">
                             {contact.lastMessageTime && (
-                              <span className="text-[10px] text-zinc-400">
-                                {new Date(contact.lastMessageTime).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
+                              <span className="text-[10px] text-zinc-400 font-mono">
+                                {formatChatListTime(contact.lastMessageTime)}
                               </span>
                             )}
                             {(contact.unreadCount ?? 0) > 0 && (
@@ -1611,7 +1662,7 @@ export default function ChatPage() {
                         </div>
                         <p className="text-xs truncate flex items-center">
                           <span className={`truncate font-medium ${
-                            contact.unreadCount ? "text-white/90" : "text-zinc-400"
+                            contact.unreadCount ? "text-white font-semibold" : "text-zinc-400"
                           }`}>
                             {contact.lastMessage || "Tap to start conversation ✨"}
                           </span>

@@ -84,9 +84,12 @@ export async function POST(req: NextRequest) {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
       try {
-        let user = await User.findOne({
-          $or: [{ username: cleanUsername }, { email: email?.toLowerCase() }],
-        });
+        const orConditions: any[] = [{ username: cleanUsername }];
+        if (email && email.trim()) {
+          orConditions.push({ email: email.toLowerCase().trim() });
+        }
+
+        let user = await User.findOne({ $or: orConditions });
 
         if (!user) {
           const coupleCode = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -101,14 +104,32 @@ export async function POST(req: NextRequest) {
           });
         } else {
           user.username = cleanUsername;
-          if (name) user.name = name;
-          if (avatar) user.avatar = avatar;
+          if (name && name.trim() && name !== cleanUsername) {
+            user.name = name;
+          }
+          // Only update avatar if new avatar is explicitly provided and not just a generic placeholder when a custom one exists
+          if (avatar && (!user.avatar || !avatar.startsWith("https://api.dicebear.com") || user.avatar.startsWith("https://api.dicebear.com"))) {
+            user.avatar = avatar;
+          }
           if (mood) user.mood = mood;
           if (status) user.status = status;
           await user.save();
         }
 
-        return NextResponse.json({ success: true, user, dbConnected: true });
+        return NextResponse.json({
+          success: true,
+          user: {
+            id: user._id.toString(),
+            username: user.username,
+            name: user.name,
+            email: user.email,
+            avatar: user.avatar,
+            coupleCode: user.coupleCode,
+            mood: user.mood,
+            status: user.status,
+          },
+          dbConnected: true,
+        });
       } catch (err: any) {
         console.error("Profile save error:", err.message);
       }

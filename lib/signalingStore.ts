@@ -170,7 +170,7 @@ export const signalingStore = {
   acceptRequest(requestId?: string, senderUsername?: string, receiverUsername?: string) {
     const sU = senderUsername?.toLowerCase().trim();
     const rU = receiverUsername?.toLowerCase().trim();
-    const req = global.liveRequests.find((r) =>
+    let req = global.liveRequests.find((r) =>
       (requestId && r.id === requestId) ||
       (sU && rU && (
         (r.senderUsername === sU && r.receiverUsername === rU) ||
@@ -179,8 +179,23 @@ export const signalingStore = {
     );
     if (req) {
       req.status = "accepted";
+    } else if (sU && rU) {
+      req = {
+        id: requestId || `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        senderUsername: sU,
+        senderName: sU.charAt(0).toUpperCase() + sU.slice(1),
+        senderAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${sU}`,
+        receiverUsername: rU,
+        status: "accepted",
+        createdAt: new Date().toISOString(),
+      };
+      global.liveRequests.unshift(req);
+    }
+    if (req) {
       signalingEmitter.emit("request_update:" + req.senderUsername, req);
       signalingEmitter.emit("request_update:" + req.receiverUsername, req);
+      signalingEmitter.emit("request:" + req.senderUsername, req);
+      signalingEmitter.emit("request:" + req.receiverUsername, req);
       return req;
     }
     return null;
@@ -189,7 +204,7 @@ export const signalingStore = {
   declineRequest(requestId?: string, senderUsername?: string, receiverUsername?: string) {
     const sU = senderUsername?.toLowerCase().trim();
     const rU = receiverUsername?.toLowerCase().trim();
-    const req = global.liveRequests.find((r) =>
+    let req = global.liveRequests.find((r) =>
       (requestId && r.id === requestId) ||
       (sU && rU && (
         (r.senderUsername === sU && r.receiverUsername === rU) ||
@@ -198,6 +213,19 @@ export const signalingStore = {
     );
     if (req) {
       req.status = "declined";
+    } else if (sU && rU) {
+      req = {
+        id: requestId || `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        senderUsername: sU,
+        senderName: sU.charAt(0).toUpperCase() + sU.slice(1),
+        senderAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${sU}`,
+        receiverUsername: rU,
+        status: "declined",
+        createdAt: new Date().toISOString(),
+      };
+      global.liveRequests.unshift(req);
+    }
+    if (req) {
       signalingEmitter.emit("request_update:" + req.senderUsername, req);
       signalingEmitter.emit("request_update:" + req.receiverUsername, req);
       return req;
