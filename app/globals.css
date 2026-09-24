@@ -65,6 +65,28 @@ body {
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
 }
 
+/* Instagram Chat Theme Backgrounds */
+.bg-radial-sunset {
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(138, 58, 185, 0.22) 0%, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(233, 89, 80, 0.20) 0%, transparent 45%),
+    radial-gradient(circle at 50% 50%, rgba(188, 42, 141, 0.12) 0%, transparent 60%);
+}
+
+.bg-radial-cyber {
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.20) 0%, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(112, 0, 255, 0.22) 0%, transparent 45%),
+    radial-gradient(circle at 50% 50%, rgba(255, 0, 127, 0.10) 0%, transparent 60%);
+}
+
+.bg-radial-rose {
+  background-image: 
+    radial-gradient(circle at 15% 20%, rgba(255, 8, 68, 0.20) 0%, transparent 45%),
+    radial-gradient(circle at 85% 80%, rgba(248, 87, 166, 0.22) 0%, transparent 45%),
+    radial-gradient(circle at 50% 50%, rgba(225, 29, 72, 0.12) 0%, transparent 60%);
+}
+
 /* Glowing text */
 .glow-text-pink {
   text-shadow: 0 0 12px rgba(255, 75, 114, 0.6), 0 0 24px rgba(255, 75, 114, 0.3);

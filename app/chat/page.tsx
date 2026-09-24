@@ -19,6 +19,7 @@ import {
   Database,
   ArrowLeft,
   Clock,
+  Palette,
 } from "lucide-react";
 import CallModal from "@/components/Call/CallModal";
 import IncomingCallAlert from "@/components/Call/IncomingCallAlert";
@@ -29,9 +30,11 @@ import HeartEffect from "@/components/UI/HeartEffect";
 import PingPickerModal from "@/components/UI/PingPickerModal";
 import MessageList, { MessageItem } from "@/components/Chat/MessageList";
 import MessageInput from "@/components/Chat/MessageInput";
+import ThemePickerModal from "@/components/Chat/ThemePickerModal";
 import { soundFX } from "@/lib/webrtc";
 import { notificationService, ToastNotification } from "@/lib/notifications";
 import { PingOption, getPingOptionFromContent } from "@/lib/lovePings";
+import { ChatThemeId, CHAT_THEMES, DEFAULT_THEME_ID } from "@/lib/themes";
 
 interface UserContact {
   username: string;
@@ -212,6 +215,17 @@ export default function ChatPage() {
 
   // Active selected chat partner
   const [selectedUser, setSelectedUser] = useState<UserContact | null>(null);
+
+  // Instagram Chat Theme State (3 themes: Sunset, Cyber, Rose)
+  const [currentThemeId, setCurrentThemeId] = useState<ChatThemeId>(DEFAULT_THEME_ID);
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("usly_chat_theme") as ChatThemeId;
+    if (savedTheme && CHAT_THEMES[savedTheme]) {
+      setCurrentThemeId(savedTheme);
+    }
+  }, []);
 
   // In-App Toast Notification
   const [activeToast, setActiveToast] = useState<ToastNotification | null>(null);
@@ -2108,11 +2122,11 @@ export default function ChatPage() {
         </aside>
 
         {/* RIGHT CHAT AREA */}
-        <section className={`flex-1 min-w-0 flex flex-col bg-usly-dark/80 relative h-full overflow-hidden ${!selectedUser ? "hidden md:flex" : "flex"}`}>
+        <section className={`flex-1 min-w-0 flex flex-col relative h-full overflow-hidden transition-colors duration-300 ${!selectedUser ? "hidden md:flex bg-usly-dark/80" : `flex ${CHAT_THEMES[currentThemeId]?.chatBg || "bg-[#0b0512]"}`}`}>
           {selectedUser ? (
             <>
-              {/* Header with Call Controls */}
-              <div className="p-2 sm:p-4 glass-panel border-b border-white/10 flex items-center justify-between z-10 flex-shrink-0">
+              {/* Header with Call Controls & Instagram Chat Themes */}
+              <div className="p-2 sm:px-4 sm:py-3 bg-black/70 backdrop-blur-xl border-b border-white/10 flex items-center justify-between z-10 flex-shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 mr-2">
                   {/* Back / Close Chat Button */}
                   <button
@@ -2125,7 +2139,7 @@ export default function ChatPage() {
                         localStorage.removeItem(`usly_last_active_partner_${currentUser.username.toLowerCase()}`);
                       }
                     }}
-                    className="p-2 -ml-1 rounded-xl bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
+                    className="p-2 -ml-1 rounded-full bg-white/10 hover:bg-white/20 text-white flex-shrink-0 active:scale-90"
                     title="Back to all chats"
                   >
                     <ArrowLeft className="w-4 h-4" />
@@ -2135,9 +2149,9 @@ export default function ChatPage() {
                     <img
                       src={selectedUser.avatar}
                       alt={selectedUser.name}
-                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border border-usly-pink/50 shadow-md object-cover"
+                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border border-white/20 shadow-md object-cover"
                     />
-                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-usly-dark" />
+                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-black" />
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -2145,60 +2159,73 @@ export default function ChatPage() {
                       <span className="truncate">{selectedUser.name}</span>
                       <span className="text-[10px] text-zinc-400 font-normal hidden sm:inline">(@{selectedUser.username})</span>
                     </h3>
-                    <p className="text-[10px] sm:text-[11px] text-usly-coral font-medium flex items-center space-x-1 truncate">
+                    <p className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center space-x-1 truncate">
+                      <span className="text-emerald-400">●</span>
                       <span>{selectedUser.mood || "Active now"}</span>
                     </p>
                   </div>
                 </div>
 
-                {/* Call & Action Controls */}
+                {/* Instagram Call & Action Controls */}
                 <div className="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
+                  {/* Instagram Theme Switcher Button */}
+                  <button
+                    onClick={() => setIsThemeModalOpen(true)}
+                    className="p-2 sm:px-3 sm:py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-zinc-200 hover:text-white transition active:scale-95 flex items-center space-x-1.5"
+                    title="Change Instagram Chat Theme"
+                  >
+                    <Palette className="w-4 h-4 text-pink-400" />
+                    <span className="text-xs font-semibold hidden md:inline">Theme</span>
+                  </button>
+
                   {/* Love Ping Button */}
                   <button
                     onClick={() => setIsPingModalOpen(true)}
-                    className="p-2 sm:px-3 sm:py-1.5 rounded-xl sm:rounded-full bg-usly-pink/15 hover:bg-usly-pink/25 border border-usly-pink/30 text-usly-coral text-xs font-semibold shadow-sm transition active:scale-90 flex items-center space-x-1"
+                    className="p-2 sm:p-2.5 rounded-full bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/30 text-pink-400 text-xs font-semibold shadow-sm transition active:scale-90 flex items-center justify-center"
                     title="Send a Romantic Ping"
                   >
-                    <Heart className="w-4 h-4 fill-usly-pink text-usly-pink animate-heartbeat" />
-                    <span className="hidden sm:inline">Ping</span>
+                    <Heart className="w-4 h-4 fill-pink-500 text-pink-400 animate-heartbeat" />
                   </button>
 
                   {/* Audio Call */}
                   <button
                     onClick={() => handleStartAudioCall()}
-                    className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-usly-surface hover:bg-usly-purple/20 border border-white/10 text-purple-300 hover:text-white transition shadow-sm active:scale-90 flex items-center justify-center"
+                    className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-zinc-200 hover:text-white transition shadow-sm active:scale-90 flex items-center justify-center"
                     title="Start Voice Call"
                   >
-                    <Phone className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <Phone className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                   </button>
 
                   {/* Video Call */}
                   <button
                     onClick={() => handleStartVideoCall()}
-                    className="p-2 sm:px-3.5 sm:py-2 rounded-xl sm:rounded-2xl bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-lg shadow-usly-pink/30 transition active:scale-90 flex items-center space-x-1"
+                    className="p-2 sm:px-3.5 sm:py-2 rounded-full bg-gradient-love hover:opacity-95 text-white text-xs font-bold shadow-lg shadow-pink-500/30 transition active:scale-90 flex items-center space-x-1"
                     title="Start HD Video Call"
                   >
-                    <Video className="w-4 h-4 sm:w-5 sm:h-5" />
-                    <span className="hidden sm:inline">Video</span>
+                    <Video className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                    <span className="hidden sm:inline">Call</span>
                   </button>
                 </div>
               </div>
 
               {/* Messages Feed */}
-              <div className="flex-1 flex flex-col overflow-hidden bg-radial-gradient min-h-0">
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0">
                 <MessageList
                   key={`msglist_${selectedUser.username.toLowerCase()}`}
                   messages={messages}
                   currentUsername={currentUser.username}
                   partnerName={selectedUser.name}
+                  partnerAvatar={selectedUser.avatar}
+                  themeId={currentThemeId}
                   onAddReaction={handleAddReaction}
                 />
 
-                {/* Message Input with Audio Whisper, Emojis, Stickers */}
+                {/* Message Input with Instagram DM style & Theme support */}
                 <MessageInput
                   key={`msginput_${selectedUser.username.toLowerCase()}`}
                   onSendMessage={handleSendMessage}
                   onSendLovePing={handleSendLovePing}
+                  themeId={currentThemeId}
                 />
               </div>
             </>
@@ -2292,6 +2319,17 @@ export default function ChatPage() {
         onClose={() => setIsPingModalOpen(false)}
         onSelectPing={(ping) => handleSendLovePing(ping)}
         partnerName={selectedUser?.name || "Partner"}
+      />
+
+      {/* Instagram Chat Theme Selector Modal */}
+      <ThemePickerModal
+        isOpen={isThemeModalOpen}
+        onClose={() => setIsThemeModalOpen(false)}
+        currentThemeId={currentThemeId}
+        onSelectTheme={(newTheme) => {
+          setCurrentThemeId(newTheme);
+          localStorage.setItem("usly_chat_theme", newTheme);
+        }}
       />
     </div>
   );
