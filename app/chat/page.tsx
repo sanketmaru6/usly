@@ -80,7 +80,7 @@ function isLoveMessage(content: string = "", type?: string): boolean {
   return LOVE_EMOJIS_REGEX.test(content);
 }
 
-// 48-Hour request expiration helper
+// Connection request timer helper (keeps request accessible and actionable)
 function getRemainingTime48h(createdAt?: string): { expired: boolean; text: string; hoursLeft: number; percent: number } {
   if (!createdAt) return { expired: false, text: "48h left", hoursLeft: 48, percent: 100 };
   const created = new Date(createdAt).getTime();
@@ -89,12 +89,13 @@ function getRemainingTime48h(createdAt?: string): { expired: boolean; text: stri
   const remainingMs = totalMs - elapsedMs;
 
   if (remainingMs <= 0) {
-    return { expired: true, text: "Expired", hoursLeft: 0, percent: 0 };
+    // Graceful: Keep visible and actionable so the user can still connect
+    return { expired: false, text: "Recent", hoursLeft: 0, percent: 12 };
   }
 
   const hours = Math.floor(remainingMs / (1000 * 60 * 60));
   const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-  const percent = Math.max(3, Math.min(100, Math.round((remainingMs / totalMs) * 100)));
+  const percent = Math.max(8, Math.min(100, Math.round((remainingMs / totalMs) * 100)));
 
   if (hours > 0) {
     return { expired: false, text: `${hours}h ${minutes}m left`, hoursLeft: hours, percent };
@@ -549,27 +550,78 @@ export default function ChatPage() {
       }
     } catch {}
 
-    // Instant fetch all active/registered users for discovery
-    fetch(`/api/users/search?currentUsername=${cleanUsername}`)
+    // Load cached sent requests from local device storage immediately
+    try {
+      const cachedSent = localStorage.getItem(`usly_sent_requests_${cleanUsername}`);
+      if (cachedSent) {
+        const parsed = JSON.parse(cachedSent);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSentRequestUsernames(parsed);
+        }
+      }
+    } catch {}
+
+    // Load cached directory users from local device storage immediately
+    try {
+      const cachedUsersStr = localStorage.getItem(`usly_directory_users_${cleanUsername}`);
+      if (cachedUsersStr) {
+        const parsed = JSON.parse(cachedUsersStr);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter((u: any) => u.username && u.username.toLowerCase() !== cleanUsername);
+          setSearchResults(valid);
+        }
+      }
+    } catch {}
+
+    // Instant fetch all active/registered users for discovery and merge into local device storage
+    fetch(`/api/users/search?currentUsername=${cleanUsername}&currentName=${encodeURIComponent(storedName || cleanUsername)}&currentAvatar=${encodeURIComponent(storedAvatar || "")}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.users && Array.isArray(data.users)) {
-          const filtered = data.users.filter(
-            (u: any) => u.username.toLowerCase() !== cleanUsername
-          );
-          setSearchResults(filtered);
-
-          // On desktop, open first user if none selected
-          const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-          if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop && filtered.length > 0) {
-            const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
-            const matched = lastPartner
-              ? filtered.find((u: any) => u.username.toLowerCase() === lastPartner.toLowerCase()) || filtered[0]
-              : filtered[0];
-            if (matched) {
-              handleSelectContact(matched);
+          setSearchResults((prev) => {
+            const map = new Map<string, UserContact>();
+            // 1. Keep all previously cached users from device
+            for (const u of prev) {
+              if (u.username && u.username.toLowerCase() !== cleanUsername) {
+                map.set(u.username.toLowerCase(), u);
+              }
             }
-          }
+            // 2. Merge fresh data from server
+            for (const u of data.users) {
+              if (u.username && u.username.toLowerCase() !== cleanUsername) {
+                const existing = map.get(u.username.toLowerCase());
+                map.set(u.username.toLowerCase(), {
+                  ...existing,
+                  ...u,
+                });
+              }
+            }
+            const merged = Array.from(map.values()).sort((a, b) => {
+              if (a.status === "online" && b.status !== "online") return -1;
+              if (b.status === "online" && a.status !== "online") return 1;
+              return (a.name || "").localeCompare(b.name || "");
+            });
+
+            // Store persistently in local device!
+            localStorage.setItem(
+              `usly_directory_users_${cleanUsername}`,
+              JSON.stringify(merged)
+            );
+
+            // On desktop, open first user if none selected
+            const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
+            if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop && merged.length > 0) {
+              const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
+              const matched = lastPartner
+                ? merged.find((u: any) => u.username.toLowerCase() === lastPartner.toLowerCase()) || merged[0]
+                : merged[0];
+              if (matched) {
+                handleSelectContact(matched);
+              }
+            }
+
+            return merged;
+          });
         }
       })
       .catch(() => {});
@@ -988,9 +1040,17 @@ export default function ChatPage() {
             updateIncomingRequestsIfChanged(reqData.incomingPending);
           }
           if (Array.isArray(reqData.outgoingPending)) {
-            setSentRequestUsernames(
-              reqData.outgoingPending.map((r: any) => (r.receiverUsername || "").toLowerCase())
-            );
+            const apiSent = reqData.outgoingPending.map((r: any) => (r.receiverUsername || "").toLowerCase());
+            setSentRequestUsernames((prev) => {
+              const merged = Array.from(new Set([...prev, ...apiSent]));
+              if (currentUserRef.current) {
+                localStorage.setItem(
+                  `usly_sent_requests_${currentUserRef.current.username.toLowerCase()}`,
+                  JSON.stringify(merged)
+                );
+              }
+              return merged;
+            });
           }
         }
 
@@ -1085,21 +1145,61 @@ export default function ChatPage() {
     };
   }, [currentUser?.username]);
 
-  // Search users directory (refreshes automatically on tab switch, query change, or periodic interval)
+  // Search users directory (refreshes automatically with presence keepalive and device storage caching)
   const fetchSearch = useCallback(async () => {
-    if (!currentUser) return;
+    if (!currentUserRef.current) return;
+    const cleanUsername = currentUserRef.current.username.toLowerCase();
+    const cleanName = currentUserRef.current.name || cleanUsername;
+    const cleanAvatar = currentUserRef.current.avatar || "";
+
     try {
-      const res = await fetch(`/api/users/search?q=${encodeURIComponent(searchQuery)}&currentUsername=${encodeURIComponent(currentUser.username)}`);
+      const res = await fetch(
+        `/api/users/search?q=${encodeURIComponent(searchQuery)}&currentUsername=${encodeURIComponent(cleanUsername)}&currentName=${encodeURIComponent(cleanName)}&currentAvatar=${encodeURIComponent(cleanAvatar)}`
+      );
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.users)) {
-          setSearchResults(data.users);
+          setSearchResults((prev) => {
+            // If user typed a search query, show the exact search results
+            if (searchQuery.trim()) {
+              return data.users.filter((u: any) => u.username && u.username.toLowerCase() !== cleanUsername);
+            }
+
+            // If exploring (empty search query), MERGE with local cache so users never vanish!
+            const map = new Map<string, UserContact>();
+            for (const u of prev) {
+              if (u.username && u.username.toLowerCase() !== cleanUsername) {
+                map.set(u.username.toLowerCase(), u);
+              }
+            }
+            for (const u of data.users) {
+              if (u.username && u.username.toLowerCase() !== cleanUsername) {
+                const existing = map.get(u.username.toLowerCase());
+                map.set(u.username.toLowerCase(), {
+                  ...existing,
+                  ...u,
+                });
+              }
+            }
+            const merged = Array.from(map.values()).sort((a, b) => {
+              if (a.status === "online" && b.status !== "online") return -1;
+              if (b.status === "online" && a.status !== "online") return 1;
+              return (a.name || "").localeCompare(b.name || "");
+            });
+
+            // Store persistently in local device!
+            localStorage.setItem(
+              `usly_directory_users_${cleanUsername}`,
+              JSON.stringify(merged)
+            );
+            return merged;
+          });
         }
       }
     } catch (e) {
-      console.error("Search fetch error:", e);
+      console.warn("Search fetch error:", e);
     }
-  }, [searchQuery, currentUser?.username]);
+  }, [searchQuery]);
 
   useEffect(() => {
     fetchSearch();
@@ -1110,9 +1210,37 @@ export default function ChatPage() {
 
   // Send connection request (chat starts only after acceptance)
   const handleSendRequest = async (targetUser: UserContact) => {
-    if (!currentUser) return;
+    if (!currentUserRef.current) return;
+    const myUname = currentUserRef.current.username.toLowerCase();
     const targetUname = targetUser.username.toLowerCase();
-    setSentRequestUsernames((prev) => [...prev.filter((u) => u !== targetUname), targetUname]);
+
+    // 1. Immediately store in sentRequestUsernames & localStorage on local device
+    setSentRequestUsernames((prev) => {
+      const next = Array.from(new Set([...prev.filter((u) => u !== targetUname), targetUname]));
+      localStorage.setItem(`usly_sent_requests_${myUname}`, JSON.stringify(next));
+      return next;
+    });
+
+    // 2. Ensure targetUser is saved in local device storage
+    try {
+      const cachedUsersStr = localStorage.getItem(`usly_directory_users_${myUname}`);
+      const cachedUsers: UserContact[] = cachedUsersStr ? JSON.parse(cachedUsersStr) : [];
+      if (!cachedUsers.some((u) => u.username.toLowerCase() === targetUname)) {
+        cachedUsers.push(targetUser);
+        localStorage.setItem(`usly_directory_users_${myUname}`, JSON.stringify(cachedUsers));
+      }
+    } catch {}
+
+    soundFX.playLovePing();
+    setActiveToast({
+      id: String(Date.now()),
+      senderName: targetUser.name,
+      senderUsername: targetUser.username,
+      senderAvatar: targetUser.avatar,
+      content: `Request sent to @${targetUser.username}! Chat will start once accepted. 💖`,
+      type: "text",
+      timestamp: Date.now(),
+    });
 
     try {
       await fetch("/api/requests", {
@@ -1120,24 +1248,14 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "send",
-          senderUsername: currentUser.username,
-          senderName: currentUser.name,
-          senderAvatar: currentUser.avatar,
+          senderUsername: currentUserRef.current.username,
+          senderName: currentUserRef.current.name,
+          senderAvatar: currentUserRef.current.avatar,
           receiverUsername: targetUser.username,
         }),
       });
-      soundFX.playLovePing();
-      setActiveToast({
-        id: String(Date.now()),
-        senderName: targetUser.name,
-        senderUsername: targetUser.username,
-        senderAvatar: targetUser.avatar,
-        content: `Request sent to @${targetUser.username}! Chat will start once accepted. 💖`,
-        type: "text",
-        timestamp: Date.now(),
-      });
     } catch (e) {
-      console.error(e);
+      console.error("Send request error:", e);
     }
   };
 
@@ -2106,11 +2224,12 @@ export default function ChatPage() {
                                 </button>
                               ) : hasSent ? (
                                 <button
-                                  disabled
-                                  className="px-2.5 py-1.5 rounded-xl bg-white/10 text-zinc-400 text-xs font-medium cursor-not-allowed flex items-center space-x-1"
+                                  onClick={() => handleSendRequest(user)}
+                                  title="Request already sent! Click to send ping / reminder 💖"
+                                  className="px-2.5 py-1.5 rounded-xl bg-usly-pink/20 hover:bg-usly-pink/30 border border-usly-pink/40 text-usly-coral text-xs font-semibold transition active:scale-95 flex items-center space-x-1 shadow-sm"
                                 >
-                                  <Clock className="w-3 h-3" />
-                                  <span>Requested ⏳</span>
+                                  <Clock className="w-3 h-3 text-usly-pink animate-pulse" />
+                                  <span>Requested 💖</span>
                                 </button>
                               ) : (
                                 <button

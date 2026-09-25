@@ -11,6 +11,18 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") || "").trim().toLowerCase();
   const currentUsername = (searchParams.get("currentUsername") || "").trim().toLowerCase();
+  const currentName = searchParams.get("currentName") || "";
+  const currentAvatar = searchParams.get("currentAvatar") || "";
+
+  // Refresh current user presence on heartbeat / search call
+  if (currentUsername) {
+    signalingStore.registerUser({
+      username: currentUsername,
+      name: currentName || currentUsername,
+      avatar: currentAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentUsername}`,
+      status: "online",
+    });
+  }
 
   const combinedMap = new Map<string, any>();
 

@@ -39,18 +39,19 @@ export async function GET(req: NextRequest) {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
       const userRegex = new RegExp(`^${username}$`, "i");
-      const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      // 7-day window so pending requests do not prematurely vanish
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
       const dbIncoming = await FriendRequest.find({
         receiverUsername: userRegex,
         status: "pending",
-        createdAt: { $gte: cutoff48h },
+        createdAt: { $gte: cutoff },
       }).sort({ createdAt: -1 });
 
       const dbOutgoing = await FriendRequest.find({
         senderUsername: userRegex,
         status: "pending",
-        createdAt: { $gte: cutoff48h },
+        createdAt: { $gte: cutoff },
       }).sort({ createdAt: -1 });
 
       const dbAccepted = await FriendRequest.find({
@@ -192,11 +193,15 @@ export async function POST(req: NextRequest) {
               ],
             },
             {
-              senderUsername: sUname,
-              senderName: senderName || sUname,
-              senderAvatar: senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
-              receiverUsername: rUname,
-              status: "pending",
+              $set: {
+                senderUsername: sUname,
+                senderName: senderName || sUname,
+                senderAvatar: senderAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sUname}`,
+                receiverUsername: rUname,
+                status: "pending",
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
             },
             { upsert: true, new: true }
           );

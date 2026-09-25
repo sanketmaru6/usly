@@ -145,11 +145,14 @@ export const signalingStore = {
     );
 
     if (existing) {
-      if (existing.status === "declined") {
-        existing.status = "pending";
-        existing.createdAt = new Date().toISOString();
-      }
+      existing.status = "pending";
+      existing.senderUsername = sUname;
+      existing.senderName = senderName || existing.senderName;
+      existing.senderAvatar = senderAvatar || existing.senderAvatar;
+      existing.receiverUsername = rUname;
+      existing.createdAt = new Date().toISOString();
       signalingEmitter.emit("request:" + rUname, existing);
+      signalingEmitter.emit("request_update:" + sUname, existing);
       return existing;
     }
 
@@ -164,6 +167,7 @@ export const signalingStore = {
     };
     global.liveRequests.unshift(req);
     signalingEmitter.emit("request:" + rUname, req);
+    signalingEmitter.emit("request_update:" + sUname, req);
     return req;
   },
 
@@ -235,19 +239,19 @@ export const signalingStore = {
 
   getRequestsForUser(username: string) {
     const uname = username.toLowerCase().trim();
-    const cutoff48h = Date.now() - 48 * 60 * 60 * 1000;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return {
       incomingPending: global.liveRequests.filter(
         (r) =>
           r.receiverUsername === uname &&
           r.status === "pending" &&
-          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff48h)
+          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff)
       ),
       outgoingPending: global.liveRequests.filter(
         (r) =>
           r.senderUsername === uname &&
           r.status === "pending" &&
-          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff48h)
+          (!r.createdAt || new Date(r.createdAt).getTime() > cutoff)
       ),
       acceptedConnections: global.liveRequests.filter(
         (r) => (r.receiverUsername === uname || r.senderUsername === uname) && r.status === "accepted"
