@@ -22,12 +22,14 @@ export async function GET(req: NextRequest) {
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
+      const uRegex = new RegExp(`^${username}$`, "i");
+
       // Fetch distinct partners from messages
       const dbMessages = await Message.find({
-        $or: [{ senderUsername: username }, { receiverUsername: username }],
+        $or: [{ senderUsername: uRegex }, { receiverUsername: uRegex }],
       })
         .sort({ createdAt: -1 })
-        .limit(300)
+        .limit(500)
         .lean();
 
       for (const m of dbMessages) {
@@ -67,7 +69,7 @@ export async function GET(req: NextRequest) {
 
       // Fetch accepted friend requests (contacts without messages yet)
       const dbAccepted = await FriendRequest.find({
-        $or: [{ receiverUsername: username }, { senderUsername: username }],
+        $or: [{ receiverUsername: uRegex }, { senderUsername: uRegex }],
         status: "accepted",
       }).lean();
 

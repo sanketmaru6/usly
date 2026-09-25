@@ -69,6 +69,7 @@ export async function GET(req: NextRequest) {
       if (username) {
         signalingEmitter.on("call:" + username, onUserCall);
         signalingEmitter.on("message:" + username, onMessage);
+        signalingEmitter.on("message_sent:" + username, onMessage);
         signalingEmitter.on("request:" + username, onRequest);
         signalingEmitter.on("request_update:" + username, onRequest);
       }
@@ -89,6 +90,7 @@ export async function GET(req: NextRequest) {
         if (username) {
           signalingEmitter.off("call:" + username, onUserCall);
           signalingEmitter.off("message:" + username, onMessage);
+          signalingEmitter.off("message_sent:" + username, onMessage);
           signalingEmitter.off("request:" + username, onRequest);
           signalingEmitter.off("request_update:" + username, onRequest);
         }

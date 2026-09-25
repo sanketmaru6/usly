@@ -146,13 +146,8 @@ function reconcileMessages(
   currentUsername: string
 ): MessageItem[] {
   if (!dbMessages || dbMessages.length === 0) {
-    return (prevMessages || []).filter(
-      (m) =>
-        m &&
-        m.id &&
-        m.id.startsWith("opt_") &&
-        m.senderUsername?.toLowerCase() === currentUsername.toLowerCase()
-    );
+    // If DB returned empty (network glitch/lag), strictly preserve local messages!
+    return prevMessages || [];
   }
   if (!prevMessages || prevMessages.length === 0) {
     return dbMessages;
@@ -160,41 +155,33 @@ function reconcileMessages(
 
   const map = new Map<string, MessageItem>();
 
-  // 1. Authoritative DB messages
-  for (const m of dbMessages) {
+  // 1. First add existing cached messages from local state/device
+  for (const m of prevMessages) {
     if (m && m.id) {
       map.set(m.id, m);
     }
   }
 
-  // 2. Preserve uncommitted optimistic or recent in-flight messages from prev
-  const sixtySecondsAgo = Date.now() - 60_000;
+  // 2. Overlay authoritative DB messages & clean up corresponding optimistic placeholders
+  for (const dbM of dbMessages) {
+    if (!dbM || !dbM.id) continue;
 
-  for (const prevMsg of prevMessages) {
-    if (!prevMsg || !prevMsg.id) continue;
+    // Check if map contains an optimistic duplicate
+    for (const [key, val] of Array.from(map.entries())) {
+      if (
+        key.startsWith("opt_") &&
+        val.content === dbM.content &&
+        val.senderUsername?.toLowerCase() === dbM.senderUsername?.toLowerCase()
+      ) {
+        map.delete(key);
+      }
+    }
 
-    if (prevMsg.id.startsWith("opt_")) {
-      // Check if DB already has a matching real message
-      const alreadyHasReal = dbMessages.some(
-        (dbM) =>
-          dbM.content === prevMsg.content &&
-          dbM.senderUsername?.toLowerCase() === prevMsg.senderUsername?.toLowerCase()
-      );
-      if (!alreadyHasReal) {
-        map.set(prevMsg.id, prevMsg);
-      }
-    } else if (!map.has(prevMsg.id)) {
-      // Message exists in prev (from local send or recent SSE) but DB GET didn't return it yet (replica lag)
-      const msgTime = prevMsg.createdAt ? new Date(prevMsg.createdAt).getTime() : 0;
-      if (msgTime >= sixtySecondsAgo) {
-        map.set(prevMsg.id, prevMsg);
-      }
+    const existing = map.get(dbM.id);
+    if (existing?.reactions && (!dbM.reactions || existing.reactions.length > dbM.reactions.length)) {
+      map.set(dbM.id, { ...dbM, reactions: existing.reactions });
     } else {
-      // Both have it: retain newer local reactions if any
-      const dbMsg = map.get(prevMsg.id)!;
-      if (prevMsg.reactions && (!dbMsg.reactions || prevMsg.reactions.length > dbMsg.reactions.length)) {
-        map.set(prevMsg.id, { ...dbMsg, reactions: prevMsg.reactions });
-      }
+      map.set(dbM.id, dbM);
     }
   }
 
@@ -975,6 +962,31 @@ export default function ChatPage() {
                 });
               }
             }
+
+            // Always persist into local device storage for this conversation thread
+            try {
+              const myUname = currentUser.username.toLowerCase();
+              const partnerUname = senderUname === myUname ? receiverUname : senderUname;
+              if (partnerUname) {
+                const threadKey = `usly_msgs_${myUname}_${partnerUname}`;
+                const cachedThreadStr = localStorage.getItem(threadKey);
+                const cachedThread: MessageItem[] = cachedThreadStr ? JSON.parse(cachedThreadStr) : [];
+                if (!cachedThread.some((m) => m.id === msg.id)) {
+                  const optIdx = cachedThread.findIndex(
+                    (m) =>
+                      m.id.startsWith("opt_") &&
+                      m.senderUsername.toLowerCase() === senderUname &&
+                      m.content === msg.content
+                  );
+                  if (optIdx > -1) {
+                    cachedThread[optIdx] = msg;
+                  } else {
+                    cachedThread.push(msg);
+                  }
+                  localStorage.setItem(threadKey, JSON.stringify(cachedThread));
+                }
+              }
+            } catch {}
 
             const isForActiveChat =
               curSelected &&

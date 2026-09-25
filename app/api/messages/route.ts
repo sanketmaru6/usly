@@ -15,62 +15,70 @@ export async function GET(req: NextRequest) {
   }
 
   // ── PRIMARY SOURCE: MongoDB (works on ALL devices, all sessions) ──
+  const allMessagesMap = new Map<string, any>();
+
   try {
     const dbRes = await connectToDatabase();
     if (dbRes.isConnected) {
+      const myRegex = new RegExp(`^${myUsername}$`, "i");
+      const partnerRegex = new RegExp(`^${partnerUsername}$`, "i");
+
       const messages = await Message.find({
         $or: [
-          { senderUsername: myUsername, receiverUsername: partnerUsername },
-          { senderUsername: partnerUsername, receiverUsername: myUsername },
+          { senderUsername: myRegex, receiverUsername: partnerRegex },
+          { senderUsername: partnerRegex, receiverUsername: myRegex },
         ],
       })
         .sort({ createdAt: 1 })
-        .limit(500)
+        .limit(1000)
         .lean();
 
       if (messages && messages.length > 0) {
-        const dbMessages = messages.map((m: any) => ({
-          id: m._id.toString(),
-          senderUsername: m.senderUsername,
-          senderName: m.senderName || m.senderUsername,
-          senderAvatar: m.senderAvatar,
-          receiverUsername: m.receiverUsername || m.receiverId,
-          type: m.type,
-          content: m.content,
-          audioDuration: m.audioDuration,
-          reactions: m.reactions || [],
-          createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
-        }));
-
-        // Also merge in-memory for messages sent < 10 seconds ago (not yet in DB index)
-        const tenSecondsAgo = Date.now() - 10_000;
-        const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername) || [];
-        const dbIds = new Set(dbMessages.map((m) => m.id));
-
-        for (const m of memMessages) {
-          if (!m || !m.id) continue;
-          if (dbIds.has(m.id)) continue;
-          // Only include very recent in-memory messages not yet persisted
-          const msgTime = m.createdAt ? new Date(m.createdAt).getTime() : 0;
-          if (msgTime >= tenSecondsAgo) {
-            dbMessages.push(m as any);
-          }
+        for (const m of messages) {
+          const item = {
+            id: m._id.toString(),
+            senderUsername: (m.senderUsername || "").toLowerCase(),
+            senderName: m.senderName || m.senderUsername,
+            senderAvatar: m.senderAvatar,
+            receiverUsername: (m.receiverUsername || (m as any).receiverId || "").toLowerCase(),
+            type: m.type,
+            content: m.content,
+            audioDuration: m.audioDuration,
+            reactions: m.reactions || [],
+            createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
+          };
+          allMessagesMap.set(item.id, item);
         }
-
-        dbMessages.sort(
-          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-        );
-
-        return NextResponse.json({ messages: dbMessages });
       }
     }
   } catch (err: any) {
     console.error("Messages GET DB error:", err.message);
   }
 
-  // ── FALLBACK: In-memory only (DB unreachable) ──
+  // ── SECONDARY: In-memory live messages (reconciles instant in-flight / recent messages) ──
   const memMessages = signalingStore.getMessagesBetween(myUsername, partnerUsername) || [];
-  return NextResponse.json({ messages: memMessages });
+  for (const m of memMessages) {
+    if (m && m.id && !allMessagesMap.has(m.id)) {
+      allMessagesMap.set(m.id, {
+        id: m.id,
+        senderUsername: (m.senderUsername || "").toLowerCase(),
+        senderName: m.senderName || m.senderUsername,
+        senderAvatar: (m as any).senderAvatar,
+        receiverUsername: (m.receiverUsername || "").toLowerCase(),
+        type: m.type,
+        content: m.content,
+        audioDuration: m.audioDuration,
+        reactions: m.reactions || [],
+        createdAt: m.createdAt || new Date().toISOString(),
+      });
+    }
+  }
+
+  const sortedList = Array.from(allMessagesMap.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+
+  return NextResponse.json({ messages: sortedList });
 }
 
 export async function POST(req: NextRequest) {
