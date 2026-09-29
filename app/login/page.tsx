@@ -167,15 +167,14 @@ export default function LoginPage() {
       try {
         window.google.accounts.id.prompt((notification: any) => {
           if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            // If One-Tap prompt is suppressed or blocked by browser, fallback to prefilled email
-            completeLogin("sanketmaru67@gmail.com", "Sanket");
+            setErrorMessage("Google One-Tap is not active in this browser. Please use the email sign-in below.");
           }
         });
       } catch {
-        completeLogin("sanketmaru67@gmail.com", "Sanket");
+        setErrorMessage("Please use the email sign-in form below to sign in.");
       }
     } else {
-      completeLogin("sanketmaru67@gmail.com", "Sanket");
+      setErrorMessage("Google services are loading. Please use email sign-in below.");
     }
   };
 
@@ -314,7 +313,7 @@ export default function LoginPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Sanket"
+              placeholder="e.g. Alex, Lily or Sanket"
               className="w-full bg-usly-surface border border-white/10 rounded-xl sm:rounded-2xl px-3.5 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-usly-pink transition font-semibold"
             />
           </div>
@@ -330,10 +329,13 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => {
-                  setEmail(e.target.value);
-                  setName(e.target.value.split("@")[0]);
+                  const val = e.target.value;
+                  setEmail(val);
+                  if (!name.trim()) {
+                    setName(val.split("@")[0] || "");
+                  }
                 }}
-                placeholder="sanketmaru67@gmail.com"
+                placeholder="you@example.com"
                 required
                 className="w-full bg-usly-surface border border-white/10 rounded-xl sm:rounded-2xl pl-9 sm:pl-10 pr-3.5 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-usly-pink transition font-semibold"
               />
@@ -345,7 +347,13 @@ export default function LoginPage() {
             disabled={isLoading || !email}
             className="w-full flex items-center justify-center space-x-2 py-2.5 sm:py-3 px-4 rounded-xl sm:rounded-2xl bg-gradient-love hover:opacity-95 text-white font-bold text-xs sm:text-sm shadow-xl shadow-usly-pink/30 transition active:scale-95 disabled:opacity-50"
           >
-            <span>{isLoading ? "Signing in..." : `Sign in with ${email}`}</span>
+            <span>
+              {isLoading
+                ? "Signing in..."
+                : email
+                ? `Continue as ${name || email.split("@")[0]}`
+                : "Sign In"}
+            </span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

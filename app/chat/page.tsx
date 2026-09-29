@@ -595,15 +595,17 @@ export default function ChatPage() {
               JSON.stringify(merged)
             );
 
-            // On desktop, open first user if none selected
+            // Only restore if user had a previous active conversation with a recognized contact
             const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-            if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop && merged.length > 0) {
+            if (!selectedUserRef.current && !userDismissedChatRef.current && isDesktop) {
               const lastPartner = localStorage.getItem(`usly_active_partner_${cleanUsername}`);
-              const matched = lastPartner
-                ? merged.find((u: any) => u.username.toLowerCase() === lastPartner.toLowerCase()) || merged[0]
-                : merged[0];
-              if (matched) {
-                handleSelectContact(matched);
+              if (lastPartner) {
+                const matchedContact = contactsRef.current.find(
+                  (c) => c.username.toLowerCase() === lastPartner.toLowerCase()
+                );
+                if (matchedContact) {
+                  handleSelectContact(matchedContact);
+                }
               }
             }
 

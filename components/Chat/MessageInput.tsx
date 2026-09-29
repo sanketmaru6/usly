@@ -311,12 +311,16 @@ export default function MessageInput({
 
       {/* Instagram-style DM Input Bar */}
       <div className="flex items-center space-x-2 w-full max-w-full">
-        {/* Instagram Left Blue Camera Button */}
+        {/* Camera / Photo Button (Styled with Theme & Glow) */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isProcessingImage}
-          className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#0095F6] hover:bg-[#1877F2] text-white flex-shrink-0 flex items-center justify-center transition shadow-md active:scale-95"
+          style={{
+            background: activeTheme.accentColor || "#FF4D8D",
+            boxShadow: `0 3px 12px ${activeTheme.accentColor ? `${activeTheme.accentColor}40` : "rgba(255, 77, 141, 0.3)"}`,
+          }}
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-full text-white flex-shrink-0 flex items-center justify-center transition hover:brightness-110 active:scale-95"
           title="Camera / Photo"
         >
           {isProcessingImage ? (
@@ -402,13 +406,16 @@ export default function MessageInput({
           </div>
         )}
 
-        {/* Instagram "Send" button when user is typing */}
+        {/* Dynamic theme Send button when user is typing */}
         {!isRecording && hasContentToSend && (
           <button
             type="button"
             onClick={handleSend}
-            className="px-2 sm:px-3 py-1.5 font-bold text-sm text-[#0095F6] hover:text-[#1877F2] active:scale-95 transition flex-shrink-0"
-            title="Send"
+            style={{
+              color: activeTheme.accentColor || "#FF4D8D",
+            }}
+            className="px-2.5 sm:px-3.5 py-1.5 font-bold text-sm hover:opacity-80 active:scale-95 transition flex-shrink-0"
+            title="Send message"
           >
             Send
           </button>
